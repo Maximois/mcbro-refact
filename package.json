@@ -1,0 +1,115 @@
+{
+  "name": "mc-browser-v2",
+  "version": "1.0.0",
+  "description": "MC Browser — Privacy First Desktop Browser",
+  "main": "main.js",
+  "author": "MC Browser",
+  "license": "GPL-3.0",
+  "scripts": {
+    "start": "electron .",
+    "dev": "set MC_DEV=1 && electron .",
+    "pack": "electron-builder --dir",
+    "dist": "node tools/build-installer.js",
+    "dist:raw": "electron-builder --win",
+    "dist:nombre": "node tools/build-installer.js --raw",
+    "test": "node --test",
+    "test:boot": "node tools/boot-smoke.js",
+    "test:doc": "node tools/doc-editor-smoke.js",
+    "test:doc-worker": "node tools/doc-editor-worker.js",
+    "test:doc-tab": "electron tools/doc-editor-tab-smoke.js"
+  },
+  "devDependencies": {
+    "electron": "30.0.9",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.mcbrowser.v2",
+    "productName": "MC Browser",
+    "directories": {
+      "output": "dist"
+    },
+    "artifactName": "MC Browser Setup.exe",
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "perchance/**/*",
+      "src/**/*",
+      "modules/**/*",
+      "preload/**/*",
+      "assets/**/*",
+      "favicon/**/*",
+      "tools/ytdlp.js",
+      "package.json",
+      "package-lock.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.png"
+    },
+    "protocols": [
+      {
+        "name": "MC Browser HTTP",
+        "schemes": [
+          "http"
+        ],
+        "role": "Viewer"
+      },
+      {
+        "name": "MC Browser HTTPS",
+        "schemes": [
+          "https"
+        ],
+        "role": "Viewer"
+      }
+    ],
+    "fileAssociations": [
+      {
+        "ext": "html",
+        "description": "HTML Web Page",
+        "role": "Viewer"
+      },
+      {
+        "ext": "htm",
+        "description": "HTML Web Page",
+        "role": "Viewer"
+      },
+      {
+        "ext": "pdf",
+        "description": "Documento PDF",
+        "role": "Editor"
+      },
+      {
+        "ext": "docx",
+        "description": "Documento de Word",
+        "role": "Editor"
+      },
+      {
+        "ext": "txt",
+        "description": "Documento de texto",
+        "role": "Editor"
+      },
+      {
+        "ext": "md",
+        "description": "Documento Markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": "markdown",
+        "description": "Documento Markdown",
+        "role": "Editor"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "include": "build/nsis/installer.nsh",
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MC Browser",
+      "deleteAppDataOnUninstall": true
+    }
+  }
+}

@@ -1,0 +1,717 @@
+'use strict';
+
+const { ipcMain, session } = require('electron');
+const { ListManager, FILTER_LISTS } = require('./lists');
+const { Engine } = require('./engine');
+const { isSameNavigationSite } = require('../../lib/navigation-guard');
+
+// Estado compartido del módulo (se inicializa en setup)
+let cfg = null;
+let authDomainsList = [];
+
+// ── Built-in fallback domains (funciona sin descargar listas) ─
+const FALLBACK_DOMAINS = [
+  'doubleclick.net', 'googlesyndication.com', 'googleadservices.com',
+  'google-analytics.com', 'googletagmanager.com', 'googletagservices.com',
+  'adnxs.com', 'adsrvr.org', 'rubiconproject.com', 'criteo.com',
+  'pubmatic.com', 'openx.net', 'casalemedia.com', 'moatads.com',
+  'sharethrough.com', 'taboola.com', 'outbrain.com',
+  'amazon-adsystem.com', 'scorecardresearch.com', 'quantserve.com',
+  'media.net', 'bluekai.com', 'demdex.net', 'krxd.net', 'rlcdn.com',
+  'addthis.com', 'hotjar.com', 'clarity.ms',
+  'bat.bing.com', 'pixel.quantserve.com',
+  'pagead2.googlesyndication.com',
+  'cdn.onesignal.com', 'pushcrew.com',
+  'adservice.google.com',
+  'ads.linkedin.com', 'analytics.twitter.com',
+  'sb.scorecardresearch.com', 'b.scorecardresearch.com',
+  'c.amazon-adsystem.com',
+  'creativecdn.com', 'exdynsrv.com', 'adskeeper.co.uk',
+  'exoclick.com', 'popads.net', 'popunder.net',
+  'trafficfactory.biz', 'adcash.com',
+  'adf.ly', 'shorte.st', 'sh.st', 'bit.ly',
+  'adtng.com',
+];
+
+// Redes publicitarias / trackers conocidos (dominio o subdominio).
+// Solo se bloquean hosts que pertenecen a estas redes, nunca por labels
+// genéricos (ad/click/pop/track...) que rompen sitios legítimos.
+const AD_NETWORK_HOSTS = [
+  'doubleclick.net', 'googlesyndication.com', 'googleadservices.com',
+  'adnxs.com', 'adsrvr.org', 'rubiconproject.com', 'criteo.com',
+  'pubmatic.com', 'openx.net', 'casalemedia.com', 'moatads.com',
+  'sharethrough.com', 'taboola.com', 'outbrain.com',
+  'amazon-adsystem.com', 'scorecardresearch.com', 'quantserve.com',
+  'media.net', 'bluekai.com', 'demdex.net', 'krxd.net', 'rlcdn.com',
+  'addthis.com', 'hotjar.com', 'clarity.ms',
+  'bat.bing.com', 'pagead2.googlesyndication.com',
+  'cdn.onesignal.com', 'pushcrew.com', 'adservice.google.com',
+  'ads.linkedin.com', 'analytics.twitter.com',
+  'creativecdn.com', 'exdynsrv.com', 'adskeeper.co.uk',
+  'exoclick.com', 'popads.net', 'popunder.net',
+  'trafficfactory.biz', 'adcash.com', 'adf.ly', 'shorte.st', 'sh.st', 'bit.ly',
+  'adtng.com', 'adnami.com', 'adpushup.com', 'adsco.re',
+  'monetag.com', 'propellerads.com', 'adsterra.com', 'hilltopads.com',
+  'popcash.net', 'revenuehits.com', 'juicyads.com', 'ad-maven.com',
+  'onclickads.net', 'pushnotifications.com'
+];
+
+// Tokens de ruta claramente publicitarios (formato VAST, /ads/, etc.).
+const AD_PATH_TOKENS = [
+  '/ads/', '/adserver', '/adframe', '/popunder', '/click-redirect',
+  '/popup', '/popads', '/advert', '/banner', '/vast',
+  '/ad?', '/ad/', '/ad-', '/ads?', '/get/',
+  'adsbygoogle', 'pagead', 'prebid', 'adservice', 'adsystem',
+  'doubleclick', 'googlesyndication', 'googleadservices', 'adtng',
+  'adnami', 'adpushup', 'banner-ad', 'ad-banner'
+];
+const TRACKER_TOKENS = /analytics|tracking|tracker|telemetry|pixel|beacon|scorecardresearch|quantserve|demdex|hotjar|clarity\.ms/i;
+
+function isAggressiveAdNavigation(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+    if (!host) return false;
+    const lower = rawUrl.toLowerCase();
+    // Redes publicitarias conocidas (dominio o subdominio).
+    if (AD_NETWORK_HOSTS.some(h => host === h || host.endsWith('.' + h))) return true;
+    // Tokens de ruta claramente publicitarios.
+    if (AD_PATH_TOKENS.some(t => lower.includes(t))) return true;
+    // Casos exactos de banner/iframe (e.g. a.adtng.com/get/... y spot_id_...)
+    if (host.includes('adtng.com') || /spot_id_[0-9]+/i.test(lower) || /google_ads_iframe|aswift_|adsbygoogle|adslot|banner-ad|ad-banner/.test(lower)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const GOOGLE_DOCUMENT_DOMAINS = ['google.com', 'google.com.py'];
+const GOOGLE_BLOCKED_AD_DOMAINS = [
+  'adservice.google.com',
+  'pagead2.googlesyndication.com',
+  'googleadservices.com',
+  'googletagmanager.com',
+  'googletagservices.com',
+  'google-analytics.com'
+];
+
+function hostMatchesDomain(host, domain) {
+  return host === domain || host.endsWith('.' + domain);
+}
+
+function isGoogleDocumentHost(host) {
+  const normalized = normalizeHost(host);
+  return GOOGLE_DOCUMENT_DOMAINS.some(domain => hostMatchesDomain(normalized, domain));
+}
+
+function isGoogleAdHost(host) {
+  const normalized = normalizeHost(host);
+  return GOOGLE_BLOCKED_AD_DOMAINS.some(domain => hostMatchesDomain(normalized, domain));
+}
+
+// ── Aislamiento estricto de terceros (port desde Android) ──
+// Equivalente a isUntrustedThirdPartyResource: corta recursos incrustados
+// (iframe/frame/embed/object) cuyo dominio no es el del documento actual.
+const VIDEO_HOSTS = [
+  'mega.nz', 'pixeldrain.com', 'filemoon.to', 'filemoon.sx', 'filemoon.in',
+  'savefiles', 'playmogo', 'mixdrop', 'miixdrop', 'dood', 'voe', 'mxdrop',
+  'lulu', 'mp4upload', 'streamwish'
+];
+
+const TRUSTED_CROSS_ORIGINS = {
+  'google.com': ['gstatic.com', 'googleusercontent.com', 'googleapis.com', 'accounts.google.com', 'oauth.googleusercontent.com'],
+  'youtube.com': ['ytimg.com', 'googlevideo.com', 'googleusercontent.com'],
+  'microsoft.com': ['microsoftonline.com', 'live.com', 'office.net'],
+  'github.com': ['githubusercontent.com', 'githubassets.com'],
+  'apple.com': ['icloud.com', 'apple-cloudkit.com'],
+  'x.com': ['twitter.com', 'google.com', 'googleapis.com', 'gstatic.com', 'googleusercontent.com', 'twimg.com', 'api.x.com', 'oauth.x.com'],
+  'twitter.com': ['x.com', 'google.com', 'googleapis.com', 'gstatic.com', 'googleusercontent.com', 'twimg.com', 'api.x.com', 'oauth.x.com'],
+  'x.ai': ['x.com', 'twitter.com', 'google.com', 'googleapis.com', 'gstatic.com', 'googleusercontent.com', 'accounts.x.ai', 'oauth.x.ai', 'auth.x.ai'],
+  'grok.com': ['x.com', 'twitter.com', 'google.com', 'googleapis.com', 'gstatic.com', 'googleusercontent.com', 'x.ai', 'accounts.x.ai'],
+  'perplexity.ai': ['pplx-next-static-public.perplexity.ai', 'pplx-next-public.perplexity.ai', 'www.perplexity.ai', 'api.perplexity.ai'],
+  'deepseek.com': ['api.deepseek.com', 'www.deepseek.com'],
+  'whatsapp.com': ['whatsapp.net', 'whatsapp.org', 'fbcdn.net'],
+  'whatsapp.net': ['whatsapp.com', 'whatsapp.org', 'fbcdn.net'],
+  'facebook.com': ['instagram.com', 'facebook.net', 'connect.facebook.net', 'fbcdn.net', 'accountscenter.facebook.com', 'graph.facebook.com', 'api.instagram.com', 'cdninstagram.com'],
+  'instagram.com': ['facebook.com', 'facebook.net', 'connect.facebook.net', 'fbcdn.net', 'accountscenter.facebook.com', 'graph.facebook.com', 'api.instagram.com', 'cdninstagram.com']
+};
+
+// En Electron 30: subFrame = iframe/frame, object = embed/object.
+const EMBEDDED_TYPES = new Set([
+  'subFrame', 'subframe', 'subdocument', 'object'
+]);
+const VIDEO_PATH_RE = /(?:^|[/?_-])(embed|player|watch|video|stream|playlist|manifest|play|e|f)(?:[/?_.=-]|$)|\.(?:m3u8|mpd|mp4|webm|ts|m4s)(?:[?#]|$)/i;
+
+function isPerchanceHost(host) {
+  const value = String(host || '').toLowerCase().replace(/^\.+/, '');
+  return value === 'perchance.org' || value.endsWith('.perchance.org');
+}
+
+function shouldBypassAdblockForSession(sess) {
+  try {
+    if (!sess) return false;
+    const partition = String(sess.partition || '').trim();
+    return partition === 'persist:perchance' || partition === 'persist:perchance-clean';
+  } catch {
+    return false;
+  }
+}
+
+function isIsolatedBrowsingPartition(partition) {
+  const value = String(partition || '').trim();
+  return /^persist:mc-session-[\w-]+$/i.test(value);
+}
+
+function isPerchanceCompatibilityRequest(resourceHost, documentHost) {
+  // El panel de Perchance no debe tener una allowlist ni excepción especial de
+  // compatibilidad. La partición dedicada ya se prepara sin restricciones; si
+  // aquí se crea una ruta de excepción, el challenge/Turnstile vuelve a romperse.
+  return false;
+}
+
+function isVideoHost(host) {
+  return VIDEO_HOSTS.some(v => host === v || host.includes(v));
+}
+
+function isSiteAllowed(host) {
+  const normalizedHost = normalizeHost(host);
+  if (!normalizedHost || !cfg?.permissions) return false;
+  return Object.entries(cfg.permissions).some(([rawDomain, value]) => {
+    const domain = normalizeHost(rawDomain).replace(/^www\./, '');
+    const rules = value && typeof value === 'object' ? value : {};
+    return rules.site === 'allow' && (normalizedHost === domain || normalizedHost.endsWith('.' + domain));
+  });
+}
+
+function isExplicitlyBlocked(host, documentUrl) {
+  const normalizedHost = normalizeHost(host);
+  if (!normalizedHost || !Array.isArray(cfg?.customRules)) return false;
+  let docHost = '';
+  try {
+    if (documentUrl) docHost = new URL(documentUrl).hostname.toLowerCase();
+  } catch {}
+  const isAuth = (h) => h && authDomainsList.some(d => h === d || h.endsWith('.' + d));
+  return cfg.customRules.some(rule => {
+    const pattern = String(rule?.pattern || rule || '').trim().replace(/^\*\./, '').replace(/^www\./, '').toLowerCase();
+    if (!pattern) return false;
+    const matches = normalizedHost === pattern || normalizedHost.endsWith('.' + pattern);
+    if (!matches) return false;
+    // Regla site-scoped: solo aplica si el documento coincide con el sitio
+    if (rule.site) {
+      return !!docHost && baseDomain(rule.site) === baseDomain(docHost);
+    }
+    // Regla global: NO aplica en dominios auth (proteger OAuth/login)
+    if (isAuth(normalizedHost) || isAuth(docHost)) return false;
+    return true;
+  });
+}
+
+function isLikelyVideoResource(rawUrl, resourceType) {
+  if (resourceType === 'media') return true;
+  if (!EMBEDDED_TYPES.has(resourceType)) return false;
+  try {
+    const url = new URL(rawUrl);
+    return VIDEO_PATH_RE.test(url.pathname + url.search);
+  } catch {
+    return false;
+  }
+}
+
+const MULTI_LABEL_PUBLIC_SUFFIXES = new Set([
+  'co.uk', 'org.uk', 'ac.uk', 'com.au', 'net.au', 'org.au',
+  'co.jp', 'co.kr', 'com.br', 'com.cn', 'com.mx', 'co.in'
+]);
+
+function normalizeHost(host) {
+  return String(host || '').toLowerCase().replace(/\.+$/, '');
+}
+
+function isAdblockHostAllowed(host, allowlist = cfg?.adblockAllowlist) {
+  const normalizedHost = normalizeHost(host).replace(/^www\./, '');
+  if (!normalizedHost || !Array.isArray(allowlist)) return false;
+  return allowlist.some(entry => {
+    const allowedHost = normalizeHost(String(entry || '').replace(/^\*\./, '')).replace(/^www\./, '');
+    return allowedHost && (normalizedHost === allowedHost || normalizedHost.endsWith('.' + allowedHost));
+  });
+}
+
+function isAdblockSiteAllowed(documentHost, allowlist = cfg?.adblockAllowedSites) {
+  return isAdblockHostAllowed(documentHost, allowlist);
+}
+
+function baseDomain(host) {
+  const normalized = normalizeHost(host);
+  const parts = normalized.split('.');
+  if (parts.length <= 2) return normalized;
+  const suffix = parts.slice(-2).join('.');
+  const labelCount = MULTI_LABEL_PUBLIC_SUFFIXES.has(suffix) ? 3 : 2;
+  return parts.slice(-labelCount).join('.');
+}
+
+function sameDomainOrSub(hostA, hostB) {
+  const first = normalizeHost(hostA);
+  const second = normalizeHost(hostB);
+  if (!first || !second) return false;
+  if (first === second || first.endsWith('.' + second) || second.endsWith('.' + first)) return true;
+  // Subdominios hermanos del mismo dominio registrable (cdn.x.com vs www.x.com).
+  return baseDomain(first) === baseDomain(second);
+}
+
+function isUntrustedThirdPartyResource(rawUrl, rawDocUrl) {
+  try {
+    const resHost = new URL(rawUrl).hostname.toLowerCase();
+    const docHost = new URL(rawDocUrl).hostname.toLowerCase();
+    if (!resHost || !docHost) return false;
+    // Mismo dominio o subdominio del documento actual → confiable.
+    if (sameDomainOrSub(resHost, docHost)) return false;
+    // Hosts de vídeo conocidos siempre permitidos (streams embebidos).
+    if (isVideoHost(resHost)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedResource(rawUrl, rawDocUrl) {
+  try {
+    const resource = new URL(rawUrl);
+    const document = new URL(rawDocUrl);
+    if (!/^https?:$/.test(resource.protocol) || !/^https?:$/.test(document.protocol)) return true;
+    const resourceHost = resource.hostname.toLowerCase();
+    const documentHost = document.hostname.toLowerCase();
+    if (sameDomainOrSub(resourceHost, documentHost) || isVideoHost(resourceHost)) return true;
+    return Object.entries(TRUSTED_CROSS_ORIGINS).some(([site, origins]) => {
+      const onSite = documentHost === site || documentHost.endsWith('.' + site);
+      return onSite && origins.some(origin => resourceHost === origin || resourceHost.endsWith('.' + origin));
+    });
+  } catch {
+    return true;
+  }
+}
+
+// ── Block session request handler ──────────────────────────
+function createBlockHandler(getEngine, allowedDomains, isEnabled, isCategoryEnabled, mediaCb, strictDomainIsolation, blockCb, requestCb, requestGuard) {
+  return (details, callback) => {
+    if (!/^https?:\/\//i.test(details.url || '')) return callback({ cancel: false });
+    if (requestGuard) {
+      try {
+        const guard = requestGuard(details);
+        if (guard?.redirectURL) return callback({ redirectURL: guard.redirectURL });
+        if (guard?.cancel) return callback({ cancel: true });
+        if (guard?.allow) return callback({ cancel: false });
+      } catch {}
+    }
+    // [DIAG-AD] temporal: ver qué pasa con las peticiones de anuncios de display
+    if (/doubleclick|googlesyndication|googleadservices/i.test(details.url)) {
+      console.log('[DIAG-AD]', details.resourceType, '| doc:', (details.documentUrl || details.referrer || '').slice(0, 90), '| url:', details.url.slice(0, 140));
+    }
+    if (requestCb) requestCb(details);
+    if (mediaCb) mediaCb(details.url, details.documentUrl || details.referrer || '', details.resourceType);
+    if (!isEnabled() && !strictDomainIsolation) return callback({ cancel: false });
+    try {
+      const url = new URL(details.url);
+      const host = url.hostname.toLowerCase();
+      let documentUrl = details.documentUrl || details.referrer || '';
+      try {
+        const topUrl = details.frame?.top?.url;
+        if (topUrl && isGoogleDocumentHost(new URL(topUrl).hostname)) documentUrl = topUrl;
+      } catch {}
+      let documentHost = '';
+      try { documentHost = new URL(documentUrl).hostname.toLowerCase(); } catch {}
+
+      if (isAdblockHostAllowed(host) || isAdblockSiteAllowed(documentHost)) return callback({ cancel: false });
+
+      // Perchance ejecuta cada generador en un subdominio propio y depende de
+      // estos recursos; la excepción solo existe dentro de documentos Perchance.
+      if (isPerchanceCompatibilityRequest(host, documentHost)) {
+        return callback({ cancel: false });
+      }
+
+      if (!isAdblockHostAllowed(host) && isExplicitlyBlocked(host, details.documentUrl || details.referrer || '')) {
+        if (blockCb) blockCb(details, 'ads');
+        return callback({ cancel: true });
+      }
+
+      // En páginas Google se desactiva el filtrado genérico de recursos:
+      // solo se bloquean los dominios publicitarios definidos arriba.
+      if (isGoogleDocumentHost(documentHost)) {
+        if (isCategoryEnabled('ads') && isGoogleAdHost(host)) {
+          if (blockCb) blockCb(details, 'ads');
+          return callback({ cancel: true });
+        }
+        return callback({ cancel: false });
+      }
+
+      // Bloquear los iframes/banner publicitarios directamente y no dejar
+      // placeholders vacíos que sigan ocupando espacio visual.
+      if (details.resourceType === 'subFrame') {
+        const frameUrl = details.url || '';
+        const docUrl = details.documentUrl || details.referrer || '';
+        const isAdFrame = isAggressiveAdNavigation(frameUrl)
+          || /(?:^|\.)?(adtng|doubleclick|googlesyndication|googleadservices|amazon-adsystem|google-analytics|googletagmanager|adsbygoogle|aswift|pagead2\.googlesyndication)\./i.test(frameUrl)
+          || /google_ads_iframe|aswift_|adsbygoogle|adslot|banner-ad|ad-banner|advertisement|spot_id_[0-9]+/i.test(frameUrl)
+          || /google_ads_iframe|aswift_|adsbygoogle|adslot|banner-ad|ad-banner|advertisement|spot_id_[0-9]+/i.test(docUrl);
+        if (isAdFrame) {
+          if (blockCb) blockCb(details, 'ads');
+          return callback({ cancel: true });
+        }
+      }
+
+      // Always allow auth/login domains
+      //
+      // IMPORTANTE: este `return` ocurre ANTES de evaluar cualquier regla del
+      // motor de listas, no solo antes del heuristico. Los hosts que llegan
+      // aca son AUTH_DOMAINS (ver main.js), que incluye hosts de autenticacion
+      // y algunos sitios de contenido que requieren una excepcion explicita.
+      // YouTube no se exime: sus peticiones pasan por las reglas normales.
+      //
+      // NO "optimizar" esto a un simple continue por host: comportamiento
+      // distinto.
+      for (const ad of allowedDomains) {
+        if (host === ad || host.endsWith('.' + ad)) {
+          return callback({ cancel: false });
+        }
+      }
+
+      // Hosts de vídeo: permitir siempre (streams embebidos).
+      if (isVideoHost(host)) {
+        return callback({ cancel: false });
+      }
+
+      // "Sitio / contenedor" NO desactiva el motor de listas.
+      // Solo evita el heurístico de tokens de tracking (OAuth, APIs propias, etc.).
+      const siteTrusted = isSiteAllowed(host);
+
+      const isTrackerRequest = TRACKER_TOKENS.test(details.url);
+      if (isCategoryEnabled('trackers') && isTrackerRequest && !siteTrusted) {
+        if (blockCb) blockCb(details, 'trackers');
+        return callback({ cancel: true });
+      }
+      if (isCategoryEnabled('ads') && isAggressiveAdNavigation(details.url)) {
+        if (blockCb) blockCb(details, 'ads');
+        return callback({ cancel: true });
+      }
+
+      const isEmbeddedContainer = documentUrl && EMBEDDED_TYPES.has(details.resourceType);
+      if (isEmbeddedContainer) return callback({ cancel: false });
+
+      if (
+        isVideoHost(host) ||
+        isLikelyVideoResource(details.url, details.resourceType)
+      ) {
+        return callback({ cancel: false });
+      }
+
+      const result = isEnabled() ? getEngine().match({
+        url: details.url,
+        type: details.resourceType || details.type || 'other',
+        documentUrl: details.documentUrl || ''
+      }) : { match: false };
+
+      if (result.match) {
+        const category = TRACKER_TOKENS.test(details.url) ? 'trackers' : 'ads';
+        if (isCategoryEnabled(category) && blockCb) blockCb(details, category);
+        if (isCategoryEnabled(category)) return callback({ cancel: true });
+      }
+
+    } catch {}
+    if (/doubleclick|googlesyndication|googleadservices/i.test(details.url)) console.log('[DIAG-AD] ALLOWED');
+    callback({ cancel: false });
+  };
+}
+
+// ── Download filter lists on first run ─────────────────────
+async function autoDownloadLists(manager, onProgress, onDone) {
+  try {
+    const results = await manager.updateAll(onProgress);
+    if (onDone) onDone(results);
+  } catch (e) {
+    if (onDone) onDone({ error: e.message });
+  }
+}
+
+const GENERIC_AD_COSMETIC_SELECTORS = [
+  'iframe[src*="adtng.com"]',
+  'iframe[src*="doubleclick.net"]',
+  'iframe[src*="googlesyndication.com"]',
+  'iframe[src*="googleadservices.com"]',
+  'iframe[src*="adnxs.com"]',
+  'iframe[src*="amazon-adsystem.com"]',
+  'iframe[src*="pagead2.googlesyndication.com"]',
+  'iframe[src*="google_ads_iframe"]',
+  'iframe[id*="google_ads_iframe"]',
+  'div[id*="google_ads_iframe"]',
+  'ins.adsbygoogle',
+  'ins[id*="aswift_"]',
+  'iframe[id*="aswift_"]',
+  'iframe[id*="ad-"], iframe[id*="ads-"], iframe[id*="banner-"], iframe[id*="adslot"]',
+  '[class*="adsbygoogle"]',
+  '[class*="ad-slot"]',
+  '[class*="adslot"]',
+  '[class*="ad-banner"]',
+  '[class*="banner-ad"]',
+  '[class*="advertisement"]',
+  '[class*="adContainer"]',
+  '[class*="ad-container"]',
+  '[id*="ad-"], [id*="ads-"], [id*="banner-ad"]',
+  'img[src*="doubleclick.net"], img[src*="googlesyndication.com"], img[src*="adsystem"]',
+  'a[href*="doubleclick.net"], a[href*="googlesyndication.com"], a[href*="adtng.com"]'
+];
+
+function builtInCosmeticSelectors(pageUrl) {
+  try {
+    const hostname = new URL(pageUrl).hostname.toLowerCase();
+    if (hostname === 'youtube.com' || hostname.endsWith('.youtube.com')) {
+      return [];
+    }
+  } catch {}
+  return [...new Set(GENERIC_AD_COSMETIC_SELECTORS)];
+}
+
+// ── Setup ──────────────────────────────────────────────────
+function setup(ctx) {
+  if (!ctx) return;
+  const { cfg: ctxCfg, saveCfg, emit, session: targetSession, allowedDomains, mediaCallback, blockCallback, requestCallback, requestGuard } = ctx;
+  const sess = targetSession || session.fromPartition('persist:mc');
+  if (shouldBypassAdblockForSession(sess)) {
+    return { manager: null, toggleBlocking: () => {}, buildPageCosmeticCss: () => ({ ok: true, count: 0, selectors: [], css: '' }) };
+  }
+  const allowed = (allowedDomains || []).filter(domain =>
+    domain !== 'youtube.com' && domain !== 'www.youtube.com' && domain !== 'googlevideo.com'
+  );
+  cfg = ctxCfg || null;
+  authDomainsList = allowedDomains || [];
+
+  const cacheDir = ctx.cacheDir || undefined;
+  const manager = new ListManager(cacheDir);
+  let enabledAds = cfg?.blockAds === true;
+  let enabledTrackers = cfg?.blockTrackers === true;
+
+  // Load cached lists first
+  const loadResult = manager.loadCached();
+
+  // If no cache, load fallback domains as inline rules
+  if (loadResult.source === 'none') {
+    const fallbackRules = FALLBACK_DOMAINS.map(d => `||${d}^`);
+    manager.engine.loadLines(fallbackRules);
+    // Auto-download lists in background
+    autoDownloadLists(manager, (p) => {
+      if (emit) emit('adblock:progress', p);
+    }, (result) => {
+      if (emit) emit('adblock:update-done', result);
+      // Reload engine with downloaded lists
+      manager.loadCached();
+    });
+  }
+
+  // Enable blocking if configured (handler checks `enabled` at runtime)
+  function toggleBlocking(on) {
+    if (typeof on === 'object') {
+      enabledAds = on.ads === true;
+      enabledTrackers = on.trackers === true;
+    } else {
+      enabledAds = !!on;
+    }
+  }
+
+  // Register handler once; it checks `enabled` and uses latest engine
+  const isEnabled = () => enabledAds || enabledTrackers;
+  const strictDomainIsolation = cfg?.strictDomainIsolation === true;
+  const isCategoryEnabled = category => category === 'trackers' ? enabledTrackers : enabledAds;
+  const blockHandler = createBlockHandler(() => manager.engine, allowed, isEnabled, isCategoryEnabled, mediaCallback, strictDomainIsolation, blockCallback, requestCallback, requestGuard);
+  sess.webRequest.onBeforeRequest(
+    { urls: ['<all_urls>'] },
+    (details, callback) => {
+      blockHandler(details, callback);
+    }
+  );
+
+  const isPrimarySession = sess === session.fromPartition('persist:mc');
+
+  if (isPrimarySession) {
+  ipcMain.handle('ai:adblock:info', () => {
+    const info = manager.getInfo();
+    return {
+      ok: true,
+      enabled: isEnabled(),
+      blockAds: enabledAds,
+      blockTrackers: enabledTrackers,
+      ruleCount: info.ruleCount,
+      domainRules: info.domainRules,
+      urlRules: info.urlRules,
+      regexRules: info.regexRules,
+      cosmeticRules: info.cosmeticRules,
+      loadedLists: info.loadedLists,
+      updating: info.updating,
+      cacheDir: info.cacheDir
+    };
+  });
+
+  ipcMain.handle('ai:adblock:import', async (_e, { url }) => {
+    // Import a single filter list from URL
+    try {
+      const listDef = { name: 'custom-' + Date.now(), url: url || 'https://easylist.to/easylist/easylist.txt', enabled: true };
+      const result = await manager.updateList(listDef);
+      if (result.ok) {
+        // Reload engine from cache
+        manager.loadCached();
+        // Re-register handler
+        if (isEnabled()) {
+          toggleBlocking(false);
+          toggleBlocking(true);
+        }
+        return { ok: true, rules: result.rules };
+      }
+      return { error: result.error };
+    } catch (e) { return { error: e.message }; }
+  });
+
+  ipcMain.handle('ai:adblock:test', async (_e, { url, type }) => {
+    const result = manager.engine.match({
+      url: url || '',
+      type: type || 'script',
+      documentUrl: ''
+    });
+    return { ok: true, match: result.match, rule: result.rule ? result.rule.raw : null };
+  });
+
+  // Additional IPC for updating lists
+  ipcMain.handle('adblock:update-lists', async () => {
+    if (manager._updating) return { updating: true };
+    const result = await manager.updateAll((progress) => {
+      emit('adblock:progress', progress);
+    });
+    if (isEnabled()) {
+      toggleBlocking(false);
+      toggleBlocking(true);
+    }
+    return result;
+  });
+
+  ipcMain.handle('adblock:get-lists', () => {
+    return FILTER_LISTS.map(l => ({
+      ...l,
+      cached: manager._cacheFile ? require('fs').existsSync(manager._cacheFile(l.name)) : false
+    }));
+  });
+
+  ipcMain.handle('adblock:toggle', (_e, on) => {
+    toggleBlocking(!!on);
+    if (cfg) cfg.blockAds = !!on;
+    if (saveCfg) saveCfg();
+    return { enabled: !!on };
+  });
+  }
+
+  function normalizeCosmeticRule(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return null;
+    const exceptionIdx = text.indexOf('#@#');
+    if (exceptionIdx >= 0) {
+      const domain = text.substring(0, exceptionIdx).trim().toLowerCase();
+      const selector = text.substring(exceptionIdx + 3).trim();
+      if (!selector) return null;
+      return { raw: (domain ? domain : '') + '#@#' + selector, domain, selector, exception: true };
+    }
+    const ci = text.indexOf('##');
+    if (ci < 0) return null;
+    const domain = text.substring(0, ci).trim().toLowerCase();
+    const selector = text.substring(ci + 2).trim();
+    if (!selector) return null;
+    return { raw: (domain ? domain : '') + '##' + selector, domain, selector, exception: false };
+  }
+
+  function userCosmeticSelectors(pageUrl) {
+    let hostname = '';
+    try { hostname = new URL(pageUrl).hostname.toLowerCase(); } catch { return []; }
+    const rules = Array.isArray(cfg?.userCosmeticRules) ? cfg.userCosmeticRules : [];
+    const out = [];
+    for (const item of rules) {
+      const rule = typeof item === 'string' ? normalizeCosmeticRule(item) : normalizeCosmeticRule(item?.raw || `${item?.domain || ''}##${item?.selector || ''}`);
+      if (!rule || rule.exception) continue;
+      if (rule.domain && !(hostname === rule.domain || hostname.endsWith('.' + rule.domain))) continue;
+      out.push(rule.selector);
+    }
+    return out;
+  }
+
+  function buildPageCosmeticCss(pageUrl) {
+    let hostname = '';
+    try { hostname = new URL(pageUrl || '').hostname.toLowerCase(); } catch {}
+    const isYouTubePage = hostname === 'youtube.com' || hostname.endsWith('.youtube.com');
+    if (isYouTubePage && isAdblockSiteAllowed(hostname)) {
+      return { ok: true, count: 0, selectors: [], css: '' };
+    }
+    const fromEngine = (cfg?.blockAds === true || enabledAds)
+      ? manager.engine.buildCosmeticCss(pageUrl || '')
+      : { selectors: [], css: '' };
+    const userSelectors = userCosmeticSelectors(pageUrl);
+    const builtIn = builtInCosmeticSelectors(pageUrl);
+    const selectors = [...new Set([...(fromEngine.selectors || []), ...userSelectors, ...builtIn])];
+    if (!selectors.length) return { ok: true, count: 0, selectors: [], css: '' };
+    const chunks = [];
+    for (let i = 0; i < selectors.length; i += 40) {
+      chunks.push(selectors.slice(i, i + 40).join(',\n'));
+    }
+    const css = chunks
+      .map(chunk => `${chunk}{display:none!important;visibility:hidden!important;height:0!important;max-height:0!important;min-height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;}`)
+      .join('\n');
+    return { ok: true, count: selectors.length, selectors, css, userCount: userSelectors.length };
+  }
+
+  if (isPrimarySession) ipcMain.handle('adblock:cosmetics', (_e, { url } = {}) => {
+    try {
+      return buildPageCosmeticCss(url || '');
+    } catch (e) {
+      return { ok: false, error: e.message, count: 0, selectors: [], css: '' };
+    }
+  });
+
+  if (isPrimarySession) ipcMain.handle('adblock:add-cosmetic', (_e, { domain, selector, raw } = {}) => {
+    const rule = normalizeCosmeticRule(raw || `${String(domain || '').trim()}##${String(selector || '').trim()}`);
+    if (!rule || rule.exception) return { ok: false, error: 'regla cosméticas inválida' };
+    if (!cfg.userCosmeticRules) cfg.userCosmeticRules = [];
+    if (cfg.userCosmeticRules.includes(rule.raw)) return { ok: true, rule: rule.raw, exists: true };
+    cfg.userCosmeticRules.push(rule.raw);
+    if (saveCfg) saveCfg();
+    return { ok: true, rule: rule.raw };
+  });
+
+  if (isPrimarySession) ipcMain.handle('adblock:remove-cosmetic', (_e, { raw, domain, selector } = {}) => {
+    const target = normalizeCosmeticRule(raw || `${String(domain || '').trim()}##${String(selector || '').trim()}`);
+    if (!target) return { ok: false, error: 'regla inválida' };
+    const before = Array.isArray(cfg.userCosmeticRules) ? cfg.userCosmeticRules.length : 0;
+    cfg.userCosmeticRules = (cfg.userCosmeticRules || []).filter(item => String(item) !== target.raw);
+    if (saveCfg) saveCfg();
+    return { ok: true, removed: before !== cfg.userCosmeticRules.length };
+  });
+
+  if (isPrimarySession) ipcMain.handle('adblock:list-cosmetics', () => ({
+    ok: true,
+    rules: Array.isArray(cfg?.userCosmeticRules) ? [...cfg.userCosmeticRules] : []
+  }));
+
+  return { manager, toggleBlocking, buildPageCosmeticCss };
+}
+
+module.exports = {
+  setup,
+  createBlockHandler,
+  FALLBACK_DOMAINS,
+  shouldBypassAdblockForSession,
+  isAggressiveAdNavigation,
+  isGoogleDocumentHost,
+  isGoogleAdHost,
+  isExplicitlyBlocked,
+  isAdblockHostAllowed,
+  isAdblockSiteAllowed,
+  builtInCosmeticSelectors,
+  isPerchanceCompatibilityRequest,
+  isUntrustedThirdPartyResource,
+  isTrustedResource,
+  isVideoHost,
+  isLikelyVideoResource,
+  sameDomainOrSub
+};
