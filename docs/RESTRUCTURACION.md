@@ -843,7 +843,7 @@ src/renderer/
 | 3 | ✅ `ui/backgrounds.js` + `ui/shortcuts.js` | fondo de paneles (bloque 03) + "FONDO PERSONALIZABLE" (bloque 28) → `backgrounds.js`; "ACCESOS DIRECTOS EDITABLES" (bloque 28) → `shortcuts.js` | hojas DOM/localStorage; el bloque 28 se partió en dos archivos |
 | 4 | ✅ `ui/logs.js` | bloque 16 completo (`mediaLogEl` + `addSidebarLog`), sección "req log" completa (`addReqLog`, `renderReqLog`, `filterReqLog`, `openRequestLog`, `clearReqLog`) y `addCookieLog` | `addSidebarLog` lo llama casi todo: salir pronto |
 | 5 | ✅ `bookmarks.js` + `history.js` | bookmarks: bloque 04 completo (CRUD, estrella, drag&drop + IIFE de estado colapsado); history: bloque 10 completo (persistencia, `addHistory/renderHistory`, atrás/adelante/reload/home, `toggleMaximize`, `notifyNavIntent` a `mc` sincroniza el botón) | semihojas: dependen de `loadUrl` solo en callbacks |
-| 6 | `lab.js` | L3622–4378, L7591–7640 | isla casi cerrada (757+50 líneas) |
+| 6 | ✅ `lab.js` | bloques 09 (laboratorio, L3208–3964 del archivo vivo: `LAB_TEMPLATES`, tabs, consola, undo/redo, exportar, grabación, historial de trabajos + su `DOMContentLoaded` con `labInit`) y 30 (`LAB FILE SYSTEM BRIDGE`: `window.lab.fs`) | isla casi cerrada |
 | 7 | `streams.js` + `downloads.js` | L5553–6977 | acotados; exponen `window.*` → antes de los `<script src>` de `modules/*` |
 | 8 | `settings.js` | L4977–5279, L5460–5552, L6978–7101 | configuración; consume pasos 2 y 4 |
 | 9 | `sessions.js` + `permissions.js` | L2789–3248, L7642–8351 | permissions después de settings; **cortar antes de L8352** |
