@@ -1,7 +1,8 @@
 'use strict';
 
-// friendlyFileName vive dentro de src/renderer.html (no es un modulo de node y
-// el renderer no se importa aqui). Se extrae el codigo tal cual para probar su
+// friendlyFileName vive en src/renderer/downloads.js (antes dentro del bloque
+// inline de src/renderer.html; la Fase 2 lo movio sin tocar el cuerpo). No es
+// un modulo de node, asi que se extrae el codigo tal cual para probar su
 // comportamiento real y no una copia que se pueda quedar vieja.
 
 const { test, describe } = require('node:test');
@@ -9,11 +10,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const HTML = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.html'), 'utf8');
+const HTML = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'downloads.js'), 'utf8');
 
 const friendlyFileName = (() => {
   const start = HTML.indexOf('function friendlyFileName(');
-  assert.notEqual(start, -1, 'friendlyFileName deberia existir en src/renderer.html');
+  assert.notEqual(start, -1, 'friendlyFileName deberia existir en src/renderer/downloads.js');
   let depth = 0;
   for (let i = start; i < HTML.length; i++) {
     if (HTML[i] === '{') depth++;
