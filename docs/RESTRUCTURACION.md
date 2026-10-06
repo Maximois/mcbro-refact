@@ -841,7 +841,7 @@ src/renderer/
 | 1 | ✅ `core/state.js` | L2350–2399 (código L2351–2399; `L2345 'use strict';` y la cabecera L2346–2349 se quedan en el HTML) | raíz obligatoria; 24 de 31 bloques consumen `state` |
 | 2 | ✅ `utils/dom.js` + `utils/url.js` | dom: **L2351–2377** (helpers del bloque 02, que el plan inicial no asignaba), **L2665–2707**, **L5049–5050**, **L6638–6655**; url: **L4444–4473** | hoja pura, cero referencias salientes |
 | 3 | ✅ `ui/backgrounds.js` + `ui/shortcuts.js` | fondo de paneles (bloque 03) + "FONDO PERSONALIZABLE" (bloque 28) → `backgrounds.js`; "ACCESOS DIRECTOS EDITABLES" (bloque 28) → `shortcuts.js` | hojas DOM/localStorage; el bloque 28 se partió en dos archivos |
-| 4 | `ui/logs.js` | L4955–4976, L5077–5111, L5538–5551 | `addSidebarLog` lo llama casi todo: salir pronto |
+| 4 | ✅ `ui/logs.js` | bloque 16 completo (`mediaLogEl` + `addSidebarLog`), sección "req log" completa (`addReqLog`, `renderReqLog`, `filterReqLog`, `openRequestLog`, `clearReqLog`) y `addCookieLog` | `addSidebarLog` lo llama casi todo: salir pronto |
 | 5 | `bookmarks.js` + `history.js` | L2588–2714, L4379–4463 | semihojas: dependen de `loadUrl` solo en callbacks |
 | 6 | `lab.js` | L3622–4378, L7591–7640 | isla casi cerrada (757+50 líneas) |
 | 7 | `streams.js` + `downloads.js` | L5553–6977 | acotados; exponen `window.*` → antes de los `<script src>` de `modules/*` |
