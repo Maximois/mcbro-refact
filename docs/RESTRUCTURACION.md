@@ -689,19 +689,180 @@ Un test de "está el código" la habría dejado pasar; uno de orden, no.
   `GUIA-PARA-COLABORADORES.md`).
 - **Datos del usuario.** Ni una prueba borra particiones o `userData`.
 
-## 7. Fase 2 (posterior): `src/renderer.html`
+## 7. Fase 2: `src/renderer.html`
 
-8371 líneas, ~6000 de JS inline. Estrategia: extraer a **scripts clásicos** en `src/renderer/`
-cargados con `<script src>` en el mismo orden que hoy, compartiendo ámbito global.
+**Estado: plan en redacción. No se ejecuta ningún commit hasta aprobación expresa del usuario.**
 
-Por qué scripts clásicos y no ES modules: los módulos de `modules/*/renderer.js` que ya se
-cargan así (`src/renderer.html:8361-8369`) esperan encontrar `mc`, `state` y el resto del
-contexto global. ES modules tienen su propio ámbito y romperían ese contrato sin más
-traducción.
+### 7.0 Regla de oro de la Fase 2 — va antes que cualquier diseño
 
-Mismo orden de extracción hoja-primero, partiendo por los bloques que ya están aislados
-(sidebar, marcadores, `Sessions`, Lab) y dejando para el final el bloque monolítico de
-webviews/descargas.
+Pedida por el usuario el 2026-10-06, y no es una preferencia: es la lección de la ronda
+anterior, en la que se tocaron funciones sin que nadie pidiera moverlas, se perdieron
+funciones y hubo que restaurarlas. Para esta fase el contrato es:
+
+1. **Mover en crudo.** El bloque se copia carácter por carácter al archivo nuevo. Cero
+   cambios de lógica, de nombres, de orden, de comentarios, de formato, de strings.
+2. **Lo raro se documenta**, aquí y en el `README.md` del archivo nuevo. No se arregla,
+   no se "mejora", no se renombra, no se borra código muerto dentro del commit del
+   movimiento. La §1 entera aplica a esta fase.
+3. **Si un bloque no se puede mover sin tocarlo, se para y se consulta.** No se
+   improvisa la adaptación: se documenta el bloque, se suspende y se decide con el
+   usuario qué hacer con él.
+4. **Los contenidos van intocables**: prompts de IA, `LAB_TEMPLATES`, strings de UI,
+   textos de confirmación, canales `mc.*`, nombres de `window.*`. Cambiar un string
+   también es cambiar comportamiento.
+5. **La extracción es por rango con script, no a mano.** Retipear 6000 líneas es la
+   forma más segura de que algo cambie sin que se note en la revisión.
+
+Lo anterior no sustituye a las reglas de verificación, las complementa: un movimiento
+crudo se puede comprobar, un "cambio pequeño" disfrazado de movimiento no siempre.
+
+### 7.1 Mediciones reales
+
+Verificadas sobre el archivo (2026-10-06):
+
+| Zona | Rango | Líneas |
+| --- | --- | --- |
+| `<style>` | L8–1333 | 1326 |
+| HTML de la UI anfitriona | L1334–2343 | 1010 |
+| **bloque `<script>` inline** | **L2344–8353** | **6010** |
+| `<script src>` de `modules/*` | L8356–8369 | 14 |
+
+Línea base medida con regex sobre el archivo (2026-10-06); es lo que debe seguir siendo
+cierto en **cada** commit de la Fase 2:
+
+| Cantidad | Valor |
+| --- | --- |
+| `function` + `async function` de nivel superior | **217** + **63** = **280** |
+| `const` / `let` de nivel superior | 20 / 29 (49 en total) |
+| IIFE | 4 (L2419, L2759, L2774, L7351) |
+| `document.addEventListener('DOMContentLoaded')` | 2 (L3277, L4377) |
+| Asignaciones `window.*` | 14 sobre 13 nombres distintos (6 en columna 0, 7 dentro de funciones/envoltorios, 1 dentro de un string) |
+| Líneas con `mc.*` / canales `mc.on` | 169 / 29; 91 nombres `mc.*` distintos |
+| Atributos inline del HTML | 210 (161 `onclick`, 35 `onchange`, 10 `onkeydown`, 4 `oninput`) |
+| Handlers invocados desde `on*="..."` | 108 en el markup (los 108 definidos dentro del bloque) y **147** en total, contando los de los templates de JS |
+
+### 7.2 Restricciones que condicionan todo (los hechos, no las preferencias)
+
+1. **Scripts clásicos, no ES modules.** `modules/*/renderer.js` (L8356–8369) y los 210
+   atributos inline esperan globales. Además `state` es un `const` de nivel superior: en
+   un módulo ES no sería `window.state` y dejaría de existir para quien lo necesite.
+2. **Los `const`/`let` de nivel superior comparten entorno léxico global entre archivos
+   clásicos.** Re declarar un nombre en dos archivos es `SyntaxError` al evaluar. Hoja a
+   vigilar: `state`, `Sessions`, `LAB_TEMPLATES`, `seenMedia`, `_bookmarks`, `dlActive`,
+   `mediaLogEl`, y los `const AI/PanelResize/WebChat/WhatsAppChat/StreamEnhancer` de los
+   módulos ya externalizados.
+3. **Orden de evaluación con contrato.** `hookPermissionsRefresh()` (L8352) envuelve
+   `window.switchTab` y `window.loadUrl` en el momento de evaluarse: exige que ya
+   existan. `stream-enhancer` parchea `window.addMediaItem/renderStreams/addStreamItem/
+   scanStreams` en `DOMContentLoaded`, y `ai-assistant` llama a `AI.init()` al evaluar:
+   todos los archivos extraídos van **antes** de L8356.
+4. **Hay código que se ejecuta al cargar**, no solo declara: IIFE de L2419/2759/2774
+   (localStorage + DOM), `loadPanelBg()` en L2467–2470, `mc.setHlsCapture()` en L5850,
+   el listener `keydown` de L7103, el IIFE `init()` de L7351–7589 (arranca webview,
+   ~20 `mc.on`, `setInterval(tickClock)`), y dos `DOMContentLoaded` (L3277, L4377) que
+   **no se ejecutan** si su archivo carga después de dispararse el evento.
+5. **`'use strict'` es una sola directiva para 6010 líneas**: cada archivo nuevo necesita
+   la suya.
+6. **Templates con `<\/script>` escapado**: solo L6003, L6062, L6099 (bloque streams) y
+   `LAB_TEMPLATES` L3627/3630/3631. Mientras sigan inline es obligatorio no romperlos.
+7. **Sin `document.currentScript`, sin `document.write`, sin `<!--`** en el archivo:
+   verificado, así que no hay trampas de parser del lado del HTML.
+8. **`mc` no tiene guard en el inline** (p. ej. `mc.setHlsCapture()` sin comprobar).
+   Mover el código no cambia eso; se documenta, se añade guard después.
+
+### 7.3 Mapa del bloque inline (31 bloques contiguos)
+
+| # | Rango | Líneas | Bloque | Núcleo |
+| --- | --- | --- | --- | --- |
+| 01 | L2344–2400 | 57 | core-state | `state` (L2372), `ENGINES`, `UA_LABELS`, `DEFAULT_SHORTCUTS` |
+| 02 | L2401–2427 | 27 | helpers | `$`, `setText`, `toggleSidebar`, IIFE de restauración |
+| 03 | L2428–2587 | 160 | fondos | fondo de paneles, auto-contraste, init L2467–2470 |
+| 04 | L2588–2788 | 201 | bookmarks | `_bookmarks`, CRUD, estrella, drag&drop |
+| 05 | L2789–3248 | 460 | sessions | `const Sessions`, `window.Sessions` (L3247) |
+| 06 | L3249–3283 | 35 | chat-edge | `toggleChatPanel` (fallback de 4 módulos) |
+| 07 | L3284–3570 | 287 | panel-routing | `showPanel`, `openReader`, escena de fallo |
+| 08 | L3571–3621 | 51 | navigation | `handleUrl`, `loadUrl` |
+| 09 | L3622–4378 | 757 | lab | `LAB_TEMPLATES`, tabs/undo, consola, init DOMContentLoaded |
+| 10 | L4379–4493 | 115 | history-nav | `addHistory/renderHistory`, `goBack/goForward/reloadPage/goHome` |
+| 11 | L4494–4523 | 30 | url-filters | `AD_HOSTS_QUICK`, `isAdUrl`, `baseDomain` |
+| 12 | L4524–4750 | 227 | webview-events | `selectionPreloadPath`, `bindWebviewToTab` |
+| 13 | L4751–4845 | 95 | tabs | `addTab` (L4756), `switchTab` (L4797), `closeTab` |
+| 14 | L4846–4899 | 54 | reload | `hardReloadTab`, `reloadTab` |
+| 15 | L4900–4954 | 55 | newtab-ui | `setEngine`, escalas de UI |
+| 16 | L4955–4976 | 22 | sidebar-log | `addSidebarLog` — **126 refs, 18 bloques + 4 módulos** |
+| 17 | L4977–5112 | 136 | cosmetic-reqlog | `addReqLog`, `escapeHtml` (L5099, 58 refs) |
+| 18 | L5113–5144 | 32 | stats | `refreshStats`, `resetStats` |
+| 19 | L5145–5279 | 135 | protections | `updateProtections`, identidad/DoH/proxy |
+| 20 | L5280–5459 | 180 | extractor | panel de recursos, `extractPageResources` |
+| 21 | L5460–5552 | 93 | privacy-blocks | `setPrivacyLevel`, bloques custom, cookies |
+| 22 | L5553–5593 | 41 | media | `seenMedia`, `addMediaItem` (parcheado por stream-enhancer) |
+| 23 | L5594–6304 | 711 | streams | Stream Hunter, `openStreamResource` con templates, yt-dlp |
+| 24 | L6305–6977 | 673 | downloads | persistencia, `bindDownloadEvents`, `dlMedia` |
+| 25 | L6978–7049 | 72 | doh-clear | `testDoH`, `clear*`, export/import de sesión |
+| 26 | L7050–7101 | 52 | synccfg | `syncCfgToUI`, `tickClock` |
+| 27 | L7102–7174 | 73 | keyboard | listener global `keydown` (único) |
+| 28 | L7175–7350 | 176 | shortcuts | fondos de página + accesos directos editables |
+| 29 | L7351–7589 | 239 | init | IIFE `init()` — boot completo |
+| 30 | L7591–7640 | 50 | lab-fs | `window.lab.fs` |
+| 31 | L7642–8353 | 712 | permissions | panel Permisos, `hookPermissionsRefresh` (L8328–8352) |
+
+### 7.4 Estructura destino y orden de extracción (hoja-primero, 10 pasos)
+
+```
+src/renderer/
+  core/state.js      utils/dom.js      ui/backgrounds.js   ui/shortcuts.js
+  ui/logs.js         bookmarks.js      history.js          lab.js
+  streams.js         downloads.js      settings.js         sessions.js
+  permissions.js     app.js            (README.md por archivo con sus rarezas)
+```
+
+| Paso | Archivo | Rango origen | Por qué es hoja |
+| --- | --- | --- | --- |
+| 1 | `core/state.js` | L2350–2399 (código L2351–2399; `L2345 'use strict';` y la cabecera L2346–2349 se quedan en el HTML) | raíz obligatoria; 24 de 31 bloques consumen `state` |
+| 2 | `utils/dom.js` | L2715–2756, L4494–4523, L5099, L6688–6704 | hoja pura, cero referencias salientes |
+| 3 | `ui/backgrounds.js` + `ui/shortcuts.js` | L2428–2586, L7175–7349 | hojas DOM/localStorage |
+| 4 | `ui/logs.js` | L4955–4976, L5077–5111, L5538–5551 | `addSidebarLog` lo llama casi todo: salir pronto |
+| 5 | `bookmarks.js` + `history.js` | L2588–2714, L4379–4463 | semihojas: dependen de `loadUrl` solo en callbacks |
+| 6 | `lab.js` | L3622–4378, L7591–7640 | isla casi cerrada (757+50 líneas) |
+| 7 | `streams.js` + `downloads.js` | L5553–6977 | acotados; exponen `window.*` → antes de L8356 |
+| 8 | `settings.js` | L4977–5279, L5460–5552, L6978–7101 | configuración; consume pasos 2 y 4 |
+| 9 | `sessions.js` + `permissions.js` | L2789–3248, L7642–8351 | permissions después de settings; **cortar antes de L8352** |
+| 10 | `app.js` | L3249–3621, L4524–4954, L7102–7174, L7351–7589, **L8352** | hub acoplado + `init()` + `hookPermissionsRefresh()` al final |
+
+Orden en el HTML resultante: `core → utils → ui → bookmarks → history → lab → streams →
+downloads → settings → sessions → permissions → app` **y después** L8356–8369 sin tocar.
+
+Detalles de mecánica, iguales en todos los pasos:
+
+- Cada `<script src>` nuevo se inserta **justo antes** del `<script>` inline (L2344) y
+  apunta a `./renderer/...`, porque `renderer.html` vive en `src/`.
+- El único añadido dentro de cada archivo nuevo es su propio `'use strict';` (§7.2.5).
+  Todo lo demás se copia carácter a carácter.
+- El rango se corta con `tools/extract-renderer-block.js`, nunca a mano; después se
+  comprueba que el cuerpo del archivo nuevo es idéntico al rango original.
+
+### 7.5 Verificación por commit (además de la de §4.1)
+
+| Check | Qué detecta |
+| --- | --- |
+| **Inventario de símbolos** (`test/renderer-symbols.test.js`, fixture generada ANTES del paso 1): las 280 funciones + 49 `const`/`let` de nivel superior + los 13 `window.*` + los 147 handlers `on*` + los globales que `modules/*` consume del renderer (`state` en ~53 líneas, `addSidebarLog` ~24, `addTab` ~17, `switchTab` ~14, `escapeHtml` ~14, `loadUrl` ~9) | una función perdida, un `window.*` que dejó de exponerse o un global del que los módulos se quedan sin dueño |
+| **Conteo de líneas**: las líneas borradas de `renderer.html` deben ser iguales a las añadidas en los archivos nuevos | un "movimiento" que en realidad editó |
+| **`git diff` sin mezcla**: solo Add/Delete de rangos enteros, nada de líneas modificadas en el medio | lógica tocada dentro de un bloque |
+| **Chequeo de orden**: `window.switchTab`/`loadUrl` antes de `hookPermissionsRefresh`; `window.addMediaItem/renderStreams/addStreamItem/scanStreams` antes de los `<script src>` de L8356 | contratos de evaluación rotos (§7.2.3) |
+| **`node --check`** en cada archivo nuevo | sintaxis; y recuérdese que **no valida referencias libres** |
+| **`npm test` + `tools/boot-smoke.js` + `tools/doc-editor-smoke.js`** | arranque real, errores no capturados en el log |
+
+### 7.6 Qué NO se toca en la Fase 2
+
+- **La lógica, en ningún commit.** Ver §7.0.
+- **El orden de L8356–8369** (los `modules/*`): no se reordenan, no se renombran, no se
+  pasan a ES modules.
+- **El HTML y el CSS** de la UI anfitriona: esta fase mueve JS inline, nada más. Sacar
+  CSS a archivos aparte sería otro plan, con su propia aprobación.
+- **Los prompts y templates** (bloque 09, `LAB_TEMPLATES`, los del bloque 23).
+- **`docs/PERCHANCE-ARCHITECTURE.md`** (contrato congelado) y las ideas retiradas de
+  `docs/IDEAS-FUTURAS.md`.
+- **Empaquetado** (`npm run dist`) sin autorización expresa.
 
 ## 8. Cómo se sabe que terminó
 
