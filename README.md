@@ -1,6 +1,8 @@
-# MC Browser v2.1 — Navegador con IA Supervisada
+# mcbro-refact
 
-Navegador de escritorio basado en Electron con **IA integrada bajo supervisión del usuario**, **memoria local tipo diario** y **modos de uso adaptativos**.
+refactorizando sin perder el original
+
+Aplicación de escritorio basada en Electron con **IA integrada bajo supervisión del usuario**, **memoria local tipo diario** y **modos de uso adaptativos**.
 
 ---
 
@@ -73,7 +75,7 @@ Navegador de escritorio basado en Electron con **IA integrada bajo supervisión 
 - La rotación de User-Agent está desactivada de forma permanente mientras se investiga una implementación fiable.
 
 #### Procedimiento de prueba
-1. Reiniciar completamente MC Browser para liberar el perfil persistente.
+1. Reiniciar completamente la aplicación para liberar el perfil persistente.
 2. Abrir Google en una pestaña nueva y comprobar búsqueda e inicio de sesión.
 3. Abrir `https://web.whatsapp.com` en otra pestaña nueva y comprobar carga, sesión y chats.
 4. Si una sesión anterior quedó inválida, borrar las cookies del sitio y volver a iniciar sesión.
@@ -141,8 +143,4 @@ flowchart TD
     F --> L
 ```
 
----
 
-## Licencia
-
-GPL-3.0
