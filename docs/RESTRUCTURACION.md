@@ -743,9 +743,14 @@ cierto en **cada** commit de la Fase 2:
 
 ### 7.2 Restricciones que condicionan todo (los hechos, no las preferencias)
 
-1. **Scripts clásicos, no ES modules.** `modules/*/renderer.js` (L8356–8369) y los 210
-   atributos inline esperan globales. Además `state` es un `const` de nivel superior: en
-   un módulo ES no sería `window.state` y dejaría de existir para quien lo necesite.
+> Los números de línea de este apartado son del archivo original: con cada paso
+> bajan y algunos bloques ya viven en `src/renderer/*` (§7.4). Para cortar,
+> siempre se localiza por contenido en el archivo vivo.
+
+1. **Scripts clásicos, no ES modules.** `modules/*/renderer.js` (las últimas
+   etiquetas del archivo) y los 210 atributos inline esperan globales. Además `state` es
+   un `const` de nivel superior: en un módulo ES no sería `window.state` y dejaría de
+   existir para quien lo necesite.
 2. **Los `const`/`let` de nivel superior comparten entorno léxico global entre archivos
    clásicos.** Re declarar un nombre en dos archivos es `SyntaxError` al evaluar. Hoja a
    vigilar: `state`, `Sessions`, `LAB_TEMPLATES`, `seenMedia`, `_bookmarks`, `dlActive`,
@@ -755,7 +760,7 @@ cierto en **cada** commit de la Fase 2:
    `window.switchTab` y `window.loadUrl` en el momento de evaluarse: exige que ya
    existan. `stream-enhancer` parchea `window.addMediaItem/renderStreams/addStreamItem/
    scanStreams` en `DOMContentLoaded`, y `ai-assistant` llama a `AI.init()` al evaluar:
-   todos los archivos extraídos van **antes** de L8356.
+   todos los archivos extraídos van **antes** de los `<script src>` de `modules/*`.
 4. **Hay código que se ejecuta al cargar**, no solo declara: IIFE de L2419/2759/2774
    (localStorage + DOM), `loadPanelBg()` en L2467–2470, `mc.setHlsCapture()` en L5850,
    el listener `keydown` de L7103, el IIFE `init()` de L7351–7589 (arranca webview,
@@ -771,6 +776,9 @@ cierto en **cada** commit de la Fase 2:
    Mover el código no cambia eso; se documenta, se añade guard después.
 
 ### 7.3 Mapa del bloque inline (31 bloques contiguos)
+
+> Rangos del archivo **original** (anteriores al paso 1). Sirven para saber qué
+> contiene cada bloque; para cortar, siempre números del archivo vivo.
 
 | # | Rango | Líneas | Bloque | Núcleo |
 | --- | --- | --- | --- | --- |
@@ -810,21 +818,28 @@ cierto en **cada** commit de la Fase 2:
 
 ```
 src/renderer/
-  core/state.js      utils/dom.js      ui/backgrounds.js   ui/shortcuts.js
-  ui/logs.js         bookmarks.js      history.js          lab.js
-  streams.js         downloads.js      settings.js         sessions.js
-  permissions.js     app.js            (README.md por archivo con sus rarezas)
+  core/state.js      utils/dom.js      utils/url.js        ui/backgrounds.js
+  ui/shortcuts.js    ui/logs.js        bookmarks.js        history.js
+  lab.js             streams.js        downloads.js        settings.js
+  sessions.js        permissions.js    app.js              (README.md por archivo con sus rarezas)
 ```
+
+> Los rangos de la tabla salieron del archivo original y hay que re-verificarlos
+> contra el archivo vivo antes de cada corte: en la primera ejecución dos venían
+> con el final cortado (mitad de función) y el bloque 02 no estaba asignado a
+> ningún paso. Por eso los pasos ya hechos llevan aquí los rangos exactos que se
+> usaron, y tras cada paso los números de lo que queda bajan: se localiza por
+> contenido, no por memoria.
 
 | Paso | Archivo | Rango origen | Por qué es hoja |
 | --- | --- | --- | --- |
-| 1 | `core/state.js` | L2350–2399 (código L2351–2399; `L2345 'use strict';` y la cabecera L2346–2349 se quedan en el HTML) | raíz obligatoria; 24 de 31 bloques consumen `state` |
-| 2 | `utils/dom.js` | L2715–2756, L4494–4523, L5099, L6688–6704 | hoja pura, cero referencias salientes |
+| 1 | ✅ `core/state.js` | L2350–2399 (código L2351–2399; `L2345 'use strict';` y la cabecera L2346–2349 se quedan en el HTML) | raíz obligatoria; 24 de 31 bloques consumen `state` |
+| 2 | ✅ `utils/dom.js` + `utils/url.js` | dom: **L2351–2377** (helpers del bloque 02, que el plan inicial no asignaba), **L2665–2707**, **L5049–5050**, **L6638–6655**; url: **L4444–4473** | hoja pura, cero referencias salientes |
 | 3 | `ui/backgrounds.js` + `ui/shortcuts.js` | L2428–2586, L7175–7349 | hojas DOM/localStorage |
 | 4 | `ui/logs.js` | L4955–4976, L5077–5111, L5538–5551 | `addSidebarLog` lo llama casi todo: salir pronto |
 | 5 | `bookmarks.js` + `history.js` | L2588–2714, L4379–4463 | semihojas: dependen de `loadUrl` solo en callbacks |
 | 6 | `lab.js` | L3622–4378, L7591–7640 | isla casi cerrada (757+50 líneas) |
-| 7 | `streams.js` + `downloads.js` | L5553–6977 | acotados; exponen `window.*` → antes de L8356 |
+| 7 | `streams.js` + `downloads.js` | L5553–6977 | acotados; exponen `window.*` → antes de los `<script src>` de `modules/*` |
 | 8 | `settings.js` | L4977–5279, L5460–5552, L6978–7101 | configuración; consume pasos 2 y 4 |
 | 9 | `sessions.js` + `permissions.js` | L2789–3248, L7642–8351 | permissions después de settings; **cortar antes de L8352** |
 | 10 | `app.js` | L3249–3621, L4524–4954, L7102–7174, L7351–7589, **L8352** | hub acoplado + `init()` + `hookPermissionsRefresh()` al final |
@@ -848,15 +863,17 @@ Detalles de mecánica, iguales en todos los pasos:
 | **Inventario de símbolos** (`test/renderer-symbols.test.js`, fixture generada ANTES del paso 1): las 280 funciones + 49 `const`/`let` de nivel superior + los 13 `window.*` + los 147 handlers `on*` + los globales que `modules/*` consume del renderer (`state` en ~53 líneas, `addSidebarLog` ~24, `addTab` ~17, `switchTab` ~14, `escapeHtml` ~14, `loadUrl` ~9) | una función perdida, un `window.*` que dejó de exponerse o un global del que los módulos se quedan sin dueño |
 | **Conteo de líneas**: las líneas borradas de `renderer.html` deben ser iguales a las añadidas en los archivos nuevos | un "movimiento" que en realidad editó |
 | **`git diff` sin mezcla**: solo Add/Delete de rangos enteros, nada de líneas modificadas en el medio | lógica tocada dentro de un bloque |
-| **Chequeo de orden**: `window.switchTab`/`loadUrl` antes de `hookPermissionsRefresh`; `window.addMediaItem/renderStreams/addStreamItem/scanStreams` antes de los `<script src>` de L8356 | contratos de evaluación rotos (§7.2.3) |
+| **Reconstrucción byte a byte**: el HTML actual debe salir de restar los rangos y añadir las etiquetas al blob anterior (`git show`), y el cuerpo del archivo nuevo debe ser exactamente esos rangos | cualquier edición dentro de un bloque "movido" |
+| **Chequeo de orden**: `window.switchTab`/`loadUrl` antes de `hookPermissionsRefresh`; `window.addMediaItem/renderStreams/addStreamItem/scanStreams` antes de los `<script src>` de `modules/*` | contratos de evaluación rotos (§7.2.3) |
 | **`node --check`** en cada archivo nuevo | sintaxis; y recuérdese que **no valida referencias libres** |
+| **`tools/renderer-globals-smoke.js <globales>`** | que el `<script src>` nuevo se descarga y **se evalúa** en la página: un fichero que no llega no lo detecta ni `node --check` ni el inventario |
 | **`npm test` + `tools/boot-smoke.js` + `tools/doc-editor-smoke.js`** | arranque real, errores no capturados en el log |
 
 ### 7.6 Qué NO se toca en la Fase 2
 
 - **La lógica, en ningún commit.** Ver §7.0.
-- **El orden de L8356–8369** (los `modules/*`): no se reordenan, no se renombran, no se
-  pasan a ES modules.
+- **El orden de los `<script src>` de `modules/*`** (últimas etiquetas del archivo):
+  no se reordenan, no se renombran, no se pasan a ES modules.
 - **El HTML y el CSS** de la UI anfitriona: esta fase mueve JS inline, nada más. Sacar
   CSS a archivos aparte sería otro plan, con su propia aprobación.
 - **Los prompts y templates** (bloque 09, `LAB_TEMPLATES`, los del bloque 23).
