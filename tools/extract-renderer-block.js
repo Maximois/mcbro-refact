@@ -11,12 +11,14 @@
  *
  * Uso:
  *   node tools/extract-renderer-block.js --from 2350 --to 2399 \
- *        --out src/renderer/core/state.js --href ./renderer/core/state.js [--strict]
+ *        --out src/renderer/core/state.js --href ./renderer/core/state.js [--strict] [--append]
  *
  *   --from/--to  lineas 1-based e inclusivas de src/renderer.html (numeros de ANTES de cortar)
  *   --out        destino, relativo a la raiz del repo
  *   --href       valor del src= que se inserta en renderer.html (relativo a src/)
  *   --strict     anade 'use strict'; como primera linea del archivo nuevo
+ *   --append     anade el rango a un archivo que ya existe; en ese caso no se
+ *                vuelve a insertar la etiqueta <script src> si ya esta
  *
  * Garantias:
  *   - El cuerpo del archivo nuevo es exactamente el rango original: no se
@@ -51,6 +53,7 @@ const to = Number(arg('--to'));
 const out = arg('--out');
 const href = arg('--href');
 const strict = process.argv.includes('--strict');
+const append = process.argv.includes('--append');
 
 if (!Number.isInteger(from) || !Number.isInteger(to)) fail('faltan --from y/o --to (enteros, 1-based)');
 if (!out || !href) fail('faltan --out y/o --href');
@@ -77,7 +80,7 @@ for (let i = 0; i < block.length; i++) {
 }
 
 const outPath = path.join(ROOT, out);
-if (fs.existsSync(outPath)) fail(`el destino ya existe: ${out}`);
+if (fs.existsSync(outPath) && !append) fail(`el destino ya existe: ${out} (usa --append para anadir otro rango)`);
 
 // El <script> que envuelve el bloque es la ultima apertura antes del corte.
 let openIdx = -1;
@@ -86,18 +89,28 @@ for (let i = from - 2; i >= 0; i--) {
 }
 if (openIdx === -1) fail('no se encontro la etiqueta <script> que envuelve el rango');
 
-const body = (strict ? `'use strict';${eol}` : '') + block.join(eol) + eol;
+const yaExiste = fs.existsSync(outPath);
+const existing = yaExiste ? fs.readFileSync(outPath, 'utf8') : '';
+const body = (strict && !yaExiste ? `'use strict';${eol}` : '') + block.join(eol) + eol;
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, body);
+fs.writeFileSync(outPath, existing + body);
 
 lines.splice(from - 1, to - from + 1);
-lines.splice(openIdx, 0, `<script src="${href}"></script>`);
+const tag = `<script src="${href}"></script>`;
+if (lines.some(l => l.trim() === tag)) {
+  console.log(`    etiqueta ${tag} ya estaba insertada; no se duplica`);
+} else {
+  lines.splice(openIdx, 0, tag);
+}
 fs.writeFileSync(HTML, lines.join(eol));
 
 const crypto = require('crypto');
 const h = b => crypto.createHash('sha256').update(b).digest('hex').slice(0, 12);
-console.log(`OK  rango L${from}-L${to} (${to - from + 1} lineas) -> ${out}`);
-console.log(`    sha256 cuerpo original ${h(block.join(eol))} == cuerpo copiado ${h(block.join(eol))}`);
-console.log(`    strict ${strict ? 'anadido (la directiva se queda tambien en renderer.html)' : 'no'}`);
+const esperado = block.join(eol) + eol;
+const escrito = fs.readFileSync(outPath, 'utf8');
+const colado = escrito.endsWith(esperado);
+console.log(`OK  rango L${from}-L${to} (${to - from + 1} lineas) -> ${out}${yaExiste ? ' (anadido)' : ''}`);
+console.log(`    sha256 rango cortado ${h(esperado)} / cola del archivo escrito ${h(escrito.slice(-esperado.length))} ${colado ? '(iguales)' : '(DISTINTOS)'}`);
+if (!colado) { console.error('FALLO: el rango no quedo tal cual al final del archivo'); process.exit(1); }
+console.log(`    strict ${strict && !yaExiste ? 'anadido (la directiva se queda tambien en renderer.html)' : 'no tocado'}`);
 console.log(`    renderer.html ${lines.length} lineas (antes ${text.split(eol).length})`);
-console.log(`    <script src> insertado en la linea ${openIdx + 1} (antes del <script> linea ${openIdx + 2})`);
