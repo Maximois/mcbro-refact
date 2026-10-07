@@ -42,12 +42,17 @@ function sello(now) {
 
 function estadoGit() {
   const r = spawnSync('git', ['status', '--porcelain'], { cwd: RAIZ, encoding: 'utf8' });
-  if (r.status !== 0 || !r.stdout) return { sucio: null, commit: null, cortos: null };
+  // Ojo: "status 0 y stdout VACIO" NO es un fallo, es un arbol LIMPIO
+  // (--porcelain no imprime nada cuando no hay cambios). Confundirlo con un
+  // error hacia que los builds limpios entraran con sucio=null y el instalador
+  // apareciera como "git sucio" sin commit.
+  if (r.status !== 0) return { sucio: null, commit: null, cortos: null };
   const rev = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: RAIZ, encoding: 'utf8' });
+  const lineas = String(r.stdout || '').trim();
   return {
-    sucio: r.stdout.trim().length > 0,
-    commit: rev.status === 0 ? rev.stdout.trim() : null,
-    cortos: r.stdout.trim().split(/\r?\n/).length
+    sucio: lineas.length > 0,
+    commit: rev.status === 0 ? (String(rev.stdout || '').trim() || null) : null,
+    cortos: lineas ? lineas.split(/\r?\n/).length : 0
   };
 }
 
@@ -68,8 +73,6 @@ const artifactName = 'MC Browser Setup-' + stamp + '.exe';
 const buildInfo = {
   version: pkg.version,
   stamp: stamp,
-  commit: git.commit,
-  clean: git.sucio === false,
   builtAt: new Date().toISOString(),
   artifactName: artifactName
 };
@@ -88,8 +91,8 @@ console.log('  nombre                 : ' + artifactName);
 
 function writeBuildInfo() {
   // El instalador llevara una copia: src/main/stats/process-metrics.js la lee
-  // en runtime y el panel "Acerca de" muestra el sello + commit, para saber
-  // desde la app que instalador se tiene instalado. Se borra al terminar:
+  // en runtime y el panel "Acerca de" muestra el nombre del instalador, para
+  // saber desde la app que build se tiene instalado. Se borra al terminar:
   // es un artefacto de build, nunca un archivo versionado.
   fs.writeFileSync(path.join(RAIZ, 'build-info.json'), JSON.stringify(buildInfo, null, 2) + '\n', 'utf8');
 }

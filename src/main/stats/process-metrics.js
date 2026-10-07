@@ -3,10 +3,9 @@
  * MC Browser -- src/main/stats/process-metrics.js
  *
  * Ahora solo registra el handler 'get-sysinfo' (datos del sistema: SO, CPU,
- * memoria, versiones y carpeta de descargas) mas el bloque `build`: sello,
- * commit y nombre del instalador que corresponde a esta app. Lo consume el
- * renderer en la seccion de informacion del sistema de Ajustes, via
- * preload.getSysinfo().
+ * memoria, versiones y carpeta de descargas) mas el bloque `build`: el nombre
+ * del instalador del que viene esta app. Lo consume el renderer en la seccion
+ * de informacion del sistema de Ajustes, via preload.getSysinfo().
  *
  * -----------------------------------------------------------------------------
  * QUE SE QUITO DE AQUI Y POR QUE
@@ -75,8 +74,6 @@ ipcMain.handle('get-sysinfo', () => {
     build: buildInfo ? {
       label: buildInfo.artifactName || '',
       stamp: buildInfo.stamp || '',
-      commit: buildInfo.commit || '',
-      clean: buildInfo.clean === true,
       packageVersion: buildInfo.version || ''
     } : null
   };
