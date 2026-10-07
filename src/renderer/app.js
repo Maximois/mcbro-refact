@@ -792,7 +792,7 @@ ${details}`;
   setText('ab-mem',      info.mem);
   setText('ab-datadir',  info.dataDir);
   const ab = info.build;
-  if (ab && ab.version) setText('ab-version', ab.version);
+  setText('ab-version', ab && ab.version ? ab.version : 'dev');
   $('dl-dir').value = info.dlDir;
 
   // Real values for fingerprinting
