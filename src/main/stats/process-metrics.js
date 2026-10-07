@@ -72,9 +72,9 @@ ipcMain.handle('get-sysinfo', () => {
     dataDir: app.getPath('userData'),
     dlDir: CFG.downloadDir || app.getPath('downloads'),
     build: buildInfo ? {
-      label: buildInfo.artifactName || '',
-      stamp: buildInfo.stamp || '',
-      packageVersion: buildInfo.version || ''
+      // Version real del instalador: la de package.json mas el sello del build,
+      // p. ej. "1.0.0-20261007-2031". Distingue un instalador de otro.
+      version: (buildInfo.version || '') + (buildInfo.stamp ? '-' + buildInfo.stamp : '')
     } : null
   };
 });
