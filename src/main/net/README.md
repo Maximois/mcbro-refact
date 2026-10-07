@@ -144,12 +144,12 @@ Sólo llevan cookie guard los webviews de la sesión principal y de las aisladas
 Ni los de WebChat (5 dominios fijos, sin bloqueo) ni los del panel de Perchance.
 
 Ese filtro es `isMainBrowsingSession(wc) || isExtraSessionWebContents(wc)`, que
-es de `sessions/partitions.js` —el paso 13— y **todavía vive en `main.js`**. Por
+es de `sessions/partitions.js` —el paso 13— y **vive en `bootstrap.js`**. Por
 eso `refreshCookieGuards(esAplicable)` lo recibe en vez de importarlo: importarlo
-aquí crearía un ciclo, porque `main.js` declara esas funciones después del
+aquí crearía un ciclo, porque `bootstrap.js` declara esas funciones después del
 `require`.
 
-`main.js` pasa `esWebviewProtegido`, un helper de tres líneas junto a los
+`bootstrap.js` pasa `esWebviewProtegido`, un helper de tres líneas junto a los
 predicados de sesión. Los 4 call sites lo pasan; sin él se inyectaría el script en
 páginas que antes no lo tenían.
 
@@ -175,7 +175,7 @@ El default de `secure` es `true`, y `cookie?.secure !== false` hace que un
 restrictiva.
 
 Se exporta desde aquí por ser lo más cercano a su único uso, pero **8 llamadas
-siguen en `main.js`**, casi todas en el IPC de sesiones (`clear-cookies`,
+siguen en `bootstrap.js`**, casi todas en el IPC de sesiones (`clear-cookies`,
 `get-site-cookies`, `add-cookie-rule`…) que es del paso 14. Cuando ese paso mueva
 el IPC, el helper puede mudarse a `sessions/` sin cambiar ninguna llamada.
 
@@ -249,20 +249,20 @@ un instante) lo hace `cookie-guard.js` entrando al mundo principal por CDP.
 existe. Por eso entran en `deps` en vez de importarse.
 
 Cuando llegue el paso 21, `deps` pasará a salir del módulo y este parámetro
-desaparece. Hasta entonces `main.js` es el dueño de esos helpers.
+desaparece. Hasta entonces `bootstrap.js` es el dueño de esos helpers.
 
 Dos detalles que importan:
 
 - **El flag se lee por getter** (`isStreamHlsCaptureEnabled()`). Si el módulo lo
   capturara por valor al registrarse, quedaría congelado en `false` y la captura
   HLS no ocurriría nunca.
-- **`consumeStreamEntryReferer` mezcla lookup y borrado.** `main.js` hacía
+- **`consumeStreamEntryReferer` mezcla lookup y borrado.** `bootstrap.js` hacía
   `findStreamEntryReferer(d)` y acto seguido `streamEntryReferers.delete(key)`.
   El borrado es parte del **consumo** — un referer de entrada se gasta en el
   primer request que lo usa — así que los dos van detrás de una sola función.
   Separados, un segundo request del mismo token reutilizaría el referer.
 
-`main.js` los pasa al registrar:
+`bootstrap.js` los pasa al registrar:
 
 ```js
 installHeaderInterceptors(sess, {
@@ -304,7 +304,7 @@ que es **dejar pasar la respuesta tal cual**. Un fallo de parseo no bloquea la
 red. Que ese `catch` llegara a ser `cb({ cancel: true })` sería un cambio de
 comportamiento muy serio, y el test lo prohíbe explícitamente.
 
-## Queda un `onBeforeSendHeaders` en `main.js`
+## Queda un `onBeforeSendHeaders` en `bootstrap.js`
 
 El de la sesión de WhatsApp (`waSess`), que alinea los Client Hints con
 `UA_WHATSAPP` para evitar el error de "navegador no compatible". Se queda ahí a
@@ -343,7 +343,7 @@ Es una funcion con dos parametros replicada cuatro veces. El dia que cambien los
 defaults (el `socks5`, el `1080`) o la forma de la regla, hay que acordarse de
 las cuatro, y basta con olvidar una para que una sesion siga saliendo a
 internet sin proxy. Ahora hay un solo sitio, y el test comprueba que
-`main.js` no vuelva a escribir una regla a mano.
+`bootstrap.js` no vuelva a escribir una regla a mano.
 
 `applyProxyFromCfg()` no espera a `setProxy()`. Sigue siendo fire-and-forget
 con `.catch()`, que es como estaba: durante el arranque de una sesion no se puede
@@ -410,9 +410,9 @@ muerta: sin cookies, sin cabeceras, sin proxy. Sale como
 daba **verde**.
 
 Ese fue el caso con `Headers.installHeaderInterceptors`: la llamada se quedo sin
-prefijo en `main.js`, `node --check` la acepto (una referencia libre no es un
+prefijo en `bootstrap.js`, `node --check` la acepto (una referencia libre no es un
 error de sintaxis) y los tests de `net/headers` pasaban porque solo comprueban
-que el modulo tenga los interceptores, no que `main.js` lo llame.
+que el modulo tenga los interceptores, no que `bootstrap.js` lo llame.
 
 Dos arreglos:
 

@@ -59,11 +59,11 @@ función, lee el `CFG` vigente cuando se invoca.
 
 - **`gpuAcceleration` no surte efecto en caliente.** La aceleración por hardware
   se decide **antes** de `app.ready` (si no, Electron ya arrancó el proceso GPU
-  con otra decisión). Por eso `readGpuAccelerationPref()` sigue en `main.js` y
+  con otra decisión). Por eso `readGpuAccelerationPref()` sigue en `bootstrap.js` y
   el resultado se inyecta con `setGpuRuntimeActive()`. `cfgSnapshot()` lo usa
   para tellingle a la UI que el cambio exige reiniciar. No mover esa lectura
   dentro de este módulo sin revisar el orden de arranque.
-- **`loadCfg()` se llama al final, no desde `main.js`.** Mantenerlo así: es lo que
+- **`loadCfg()` se llama al final, no desde `bootstrap.js`.** Mantenerlo así: es lo que
   hace segura la destructuración de `CFG` descrita arriba.
 - **`saveCfg()` escribe de forma síncrona y sin cola.** Se llama en handlers de
   IPC concurrentes y al cerrar la ventana. No cambiar a asíncrono sin revisar

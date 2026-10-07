@@ -18,7 +18,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
@@ -32,10 +32,10 @@ const LEEN_AL_CARGAR = {
 describe('la carpeta de datos se fija antes de que nadie la lea', () => {
   test('setPath va antes del primer require de proyecto', () => {
     const setPath = MAIN.indexOf("app.setPath('userData'");
-    assert.ok(setPath > 0, 'main.js tiene que fijar userData');
+    assert.ok(setPath > 0, 'bootstrap.js tiene que fijar userData');
     // El primer require de codigo propio: algo bajo ./ o una carpeta del repo.
     const primerRequire = MAIN.search(/require\('\.\//);
-    assert.ok(primerRequire > 0, 'main.js tiene requires de proyecto');
+    assert.ok(primerRequire > 0, 'bootstrap.js tiene requires de proyecto');
     assert.ok(setPath < primerRequire,
       `setPath('userData') esta en la linea ${MAIN.slice(0, setPath).split('\n').length} `
       + `y el primer require de proyecto en la ${MAIN.slice(0, primerRequire).split('\n').length}`);
@@ -53,7 +53,7 @@ describe('la carpeta de datos se fija antes de que nadie la lea', () => {
     }
   });
 
-  test('cada modulo lee la carpeta con la que main.js escribio', () => {
+  test('cada modulo lee la carpeta con la que bootstrap.js escribio', () => {
     // Si uno de los tres se guiara por su cuenta (por ejemplo leyendo appData
     // en vez de userData), volveria el mismo bug por otra puerta.
     for (const rel of Object.keys(LEEN_AL_CARGAR)) {

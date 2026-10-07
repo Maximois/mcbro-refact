@@ -13,10 +13,10 @@ function jsDelProcesoPrincipal() {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) recorrer(p);
-      // bootstrap.js es la copia en curso de la migración (ver main.js:24):
-      // no se require en ningún lado, así que en runtime sus canales no se
-      // registran. Excluirlo cuando la migración termine y main.js se vacíe.
-      else if (e.name.endsWith('.js') && e.name !== 'bootstrap.js') out.push(p);
+      // bootstrap.js ya no es una copia inactiva (paso 28): main.js lo carga
+      // como primer require de proyecto y ahi viven los canales que escapan a
+      // los modulos. Se escanea igual que el resto del proceso principal.
+      else if (e.name.endsWith('.js')) out.push(p);
     }
   };
   recorrer(path.join(RAIZ, 'src', 'main'));

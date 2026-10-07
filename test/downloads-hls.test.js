@@ -15,7 +15,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const HLS = leer('src', 'main', 'downloads', 'hls.js');
 const FILE = leer('src', 'main', 'downloads', 'file.js');
 
@@ -24,10 +24,10 @@ const FILE = leer('src', 'main', 'downloads', 'file.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('downloads/hls.js -- la extraccion', () => {
-  test('main.js lo registra sin parametros, desde el paso 18', () => {
-    assert.match(MAIN, /const DownloadsHls = require\('\.\/src\/main\/downloads\/hls'\);/);
+  test('bootstrap.js lo registra sin parametros, desde el paso 18', () => {
+    assert.match(MAIN, /const DownloadsHls = require\('\.\/downloads\/hls'\);/);
     // Antes era registerHlsIpc({ finalizeMediaFile }) porque la funcion vivia
-    // en main.js y no se podia requerir sin ciclo. El paso 18 la movio a
+    // en bootstrap.js y no se podia requerir sin ciclo. El paso 18 la movio a
     // ffmpeg.js y hls.js la requiere directo, asi que el parametro desaparecio.
     //
     // Se fija que NO vuelva, porque reintroducirlo "por simetria" con
@@ -38,12 +38,12 @@ describe('downloads/hls.js -- la extraccion', () => {
     assert.match(HLS, /const Ffmpeg = require\('\.\/ffmpeg'\);/);
   });
 
-  test('los helpers del manifiesto se fueron de main.js', () => {
+  test('los helpers del manifiesto se fueron de bootstrap.js', () => {
     for (const fn of ['resolveUrl', 'downloadSegment', 'pickBestHlsVariant',
       'parseHlsSegmentUrls', 'hlsSegmentIv', 'decryptAes128Segment',
       'loadHlsEncryption', 'writeHlsChunk', 'flushHlsOutput']) {
       assert.ok(HLS.includes(`function ${fn}(`), `${fn} no esta en hls.js`);
-      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en main.js`);
+      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en bootstrap.js`);
     }
     assert.match(HLS, /ipcMain\.handle\('dl-hls'/);
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('dl-hls'/);
@@ -53,7 +53,7 @@ describe('downloads/hls.js -- la extraccion', () => {
     // Antes este test decía "dl-file se queda para el paso 17". Falló al hacer
     // el 17, que es lo que debía pasar: los tests de extracción avisan de qué se
     // movió.
-    assert.match(MAIN, /const DownloadsFile = require\('\.\/src\/main\/downloads\/file'\);/);
+    assert.match(MAIN, /const DownloadsFile = require\('\.\/downloads\/file'\);/);
     assert.match(MAIN, /DownloadsFile\.registerFileDownloadIpc\(\);/);
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('dl-file'/);
     assert.match(FILE, /ipcMain\.handle\('dl-file'/);
@@ -71,7 +71,7 @@ describe('downloads/hls.js -- la extraccion', () => {
   test('la reanudacion viene de lib/hls-resume, con la ruta relativa correcta', () => {
     assert.match(HLS, /require\('\.\.\/\.\.\/\.\.\/lib\/hls-resume'\)/);
     assert.match(HLS, /fingerprintHlsPlaylist, loadHlsResumeState, saveHlsResumeState/);
-    // Y el require de main.js era su unico consumidor, asi que se borro. Solo
+    // Y el require de bootstrap.js era su unico consumidor, asi que se borro. Solo
     // queda el comentario que explica por que, sin ninguna llamada.
     assert.doesNotMatch(MAIN, /require\('\.\/lib\/hls-resume'\)/);
     assert.doesNotMatch(MAIN, /loadHlsResumeState\(/);

@@ -9,7 +9,7 @@ const PART = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'sessions', 'partitions.js'),
   'utf8'
 );
-const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const MAIN = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
 const codigo = PART.slice(PART.indexOf('*/') + 2);
 
 describe('sessions/partitions.js — los nombres de particion', () => {
@@ -22,7 +22,7 @@ describe('sessions/partitions.js — los nombres de particion', () => {
     assert.match(PART, /function extraSessionPartition\(id\) \{\s*\n\s*return 'persist:mc-session-' \+ id;/);
   });
 
-  // 'persist:mc' sigue escrito a mano en varios sitios de main.js a proposito:
+  // 'persist:mc' sigue escrito a mano en varios sitios de bootstrap.js a proposito:
   // unificarlo es otro commit, con su propio test de paridad de strings.
   test('la particion principal NO se unifico todavia', () => {
     // Contra el codigo, no contra el archivo: el JSDoc nombra MAIN_PARTITION
@@ -30,7 +30,7 @@ describe('sessions/partitions.js — los nombres de particion', () => {
     assert.doesNotMatch(codigo, /MAIN_PARTITION/);
     assert.match(PART, /session\.fromPartition\('persist:mc'\)/);
     const enMain = (MAIN.match(/fromPartition\('persist:mc'\)/g) || []).length;
-    assert.ok(enMain > 0, 'main.js sigue usando el literal, como antes');
+    assert.ok(enMain > 0, 'bootstrap.js sigue usando el literal, como antes');
   });
 });
 
@@ -57,7 +57,7 @@ describe('sessions/partitions.js — los predicados no lanzan nunca', () => {
   });
 });
 
-describe('sessions/partitions.js — main.js lo usa siempre cualificado', () => {
+describe('sessions/partitions.js — bootstrap.js lo usa siempre cualificado', () => {
   // El fallo que esto evita: mover el bloque y dejar una llamada sin
   // Sessions., que node --check acepta y que solo se ve al arrancar.
   test('ninguna mencion sin Sessions.', () => {
@@ -69,7 +69,7 @@ describe('sessions/partitions.js — main.js lo usa siempre cualificado', () => 
     }
   });
 
-  test('las definiciones se fueron de main.js', () => {
+  test('las definiciones se fueron de bootstrap.js', () => {
     assert.doesNotMatch(MAIN, /const WEBCHAT_PARTITION\s*=/);
     assert.doesNotMatch(MAIN, /function isWebchatSession\(/);
     assert.doesNotMatch(MAIN, /function esWebviewProtegido\(/);
@@ -77,7 +77,7 @@ describe('sessions/partitions.js — main.js lo usa siempre cualificado', () => 
   });
 
   test('el require esta a nivel de modulo', () => {
-    assert.match(MAIN, /const Sessions = require\('\.\/src\/main\/sessions\/partitions'\);/);
+    assert.match(MAIN, /const Sessions = require\('\.\/sessions\/partitions'\);/);
   });
 });
 
@@ -99,7 +99,7 @@ describe('sessions/partitions.js — se acabaron las inyecciones temporales', ()
   });
 
   // El IPC tiene que seguir ahi. Se perdio una vez: el helper que quita un
-  // bloque de main.js lo borraba entero en vez de sustituirlo, y el test de
+  // bloque de bootstrap.js lo borraba entero en vez de sustituirlo, y el test de
   // proxy:set lo	echo notar antes de commitear.
   test('proxy:set sigue registrado', () => {
     assert.match(MAIN, /ipcMain\.handle\('proxy:set', \(_e, settings = \{\}\) => Proxy\.setProxy\(settings\)\);/);

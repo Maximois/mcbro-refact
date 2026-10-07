@@ -9,7 +9,7 @@ const MOD = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'net', 'proxy.js'),
   'utf8'
 );
-const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const MAIN = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
 // El JSDoc menciona el nombre de sessions/partitions.js al explicar la
 // importacion; las aserciones de ausencias van contra el codigo, no el texto.
 const codigo = MOD.slice(MOD.indexOf('*/') + 2);
@@ -30,14 +30,14 @@ describe('net/proxy.js — la regla de proxy', () => {
 describe('net/proxy.js — la duplicacion de setProxy se fue con el modulo', () => {
   // El bug que vigila esto: alguien anade una quinta sesion y copia/pega el
   // bloque entero en vez de llamar a la funcion.
-  test('main.js ya no escribe ninguna regla de proxy a mano', () => {
+  test('bootstrap.js ya no escribe ninguna regla de proxy a mano', () => {
     assert.doesNotMatch(MAIN, /proxyRules:\s*`\$\{CFG\.proxyType/);
     assert.doesNotMatch(MAIN, /CFG\.proxyType \|\| 'socks5'/);
   });
 
   test('las 4 sesiones llaman a applyProxyFromCfg con su etiqueta', () => {
     // El paso 13 movio tres de las cuatro a sus modulos de sesion, asi que ya
-    // no estan todas en main.js. Se cuentan ahi y en los modulos que las
+    // no estan todas en bootstrap.js. Se cuentan ahi y en los modulos que las
     // pertenecen; lo que se vigila es que sean cuatro y con su etiqueta.
     const modulos = ['extra', 'webchat', 'whatsapp']
       .map((m) => fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'sessions', `${m}.js`), 'utf8'))
@@ -47,7 +47,7 @@ describe('net/proxy.js — la duplicacion de setProxy se fue con el modulo', () 
     assert.equal(llamadas.length, 4, 'principal, webchat, whatsapp y aislada');
     const etiquetas = llamadas.map((c) => c[2] || '').sort();
     assert.deepEqual(etiquetas, ['', '[session]', '[webchat]', '[whatsapp]']);
-    // Y cada una en su sitio: la principal en main.js, las otras en su modulo.
+    // Y cada una en su sitio: la principal en bootstrap.js, las otras en su modulo.
     assert.match(MAIN, /applyProxyFromCfg\(\s*sess\s*,\s*''/);
     assert.match(modulos, /applyProxyFromCfg\(\s*sess\s*,\s*'\[session\]'/);
     assert.match(modulos, /applyProxyFromCfg\(\s*wchSess\s*,\s*'\[webchat\]'/);
@@ -100,7 +100,7 @@ describe('net/proxy.js — setProxy', () => {
 });
 
 describe('net/proxy.js — el IPC', () => {
-  test('proxy:set sigue registrado en main.js', () => {
+  test('proxy:set sigue registrado en bootstrap.js', () => {
     assert.match(MAIN, /ipcMain\.handle\('proxy:set', \(_e, settings = \{\}\) => Proxy\.setProxy\(settings\)\);/);
   });
 

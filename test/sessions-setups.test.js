@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const NATIVE = leer('src', 'main', 'downloads', 'native.js');
 const EXTRA = leer('src', 'main', 'sessions', 'extra.js');
 const WEBCHAT = leer('src', 'main', 'sessions', 'webchat.js');
@@ -103,7 +103,7 @@ describe('sessions/extra.js — paridad con la sesion principal', () => {
     assert.match(CUERPO.extra, /emit: \(\) => \{\}/);
   });
 
-  // Los modulos de funcion se importan con namespace, como en main.js. No es
+  // Los modulos de funcion se importan con namespace, como en bootstrap.js. No es
   // estetica: un destructuring plano esconde de donde viene cada simbolo, y en
   // un archivo que se reordena cada cierto tiempo eso es justo lo que hace
   // falta leer. La excepcion son config y runtime, y estan documentadas:
@@ -216,21 +216,21 @@ describe('sessions/whatsapp.js — el Client Hints que se hace pasar por Chrome'
     //lady picked up este interceptor de waSess.
     const headers = leer('src', 'main', 'net', 'headers.js');
     assert.doesNotMatch(headers, /waSess/);
-    assert.equal((MAIN.match(/\.webRequest\.onBeforeSendHeaders/g) || []).length, 0, 'ya no queda ninguno en main.js');
+    assert.equal((MAIN.match(/\.webRequest\.onBeforeSendHeaders/g) || []).length, 0, 'ya no queda ninguno en bootstrap.js');
   });
 });
 
-describe('sessions/* — el cableado en main.js', () => {
-  test('las definiciones se fueron de main.js', () => {
+describe('sessions/* — el cableado en bootstrap.js', () => {
+  test('las definiciones se fueron de bootstrap.js', () => {
     for (const nombre of ['setupExtraSession', 'setupWebchatSession', 'setupWhatsappSession']) {
       assert.doesNotMatch(MAIN, new RegExp(`function ${nombre}\\(`), `${nombre} sigue definida`);
     }
   });
 
   test('las tres se llaman con prefijo', () => {
-    assert.match(MAIN, /const SessionsExtra = require\('\.\/src\/main\/sessions\/extra'\);/);
-    assert.match(MAIN, /const SessionsWebchat = require\('\.\/src\/main\/sessions\/webchat'\);/);
-    assert.match(MAIN, /const SessionsWhatsapp = require\('\.\/src\/main\/sessions\/whatsapp'\);/);
+    assert.match(MAIN, /const SessionsExtra = require\('\.\/sessions\/extra'\);/);
+    assert.match(MAIN, /const SessionsWebchat = require\('\.\/sessions\/webchat'\);/);
+    assert.match(MAIN, /const SessionsWhatsapp = require\('\.\/sessions\/whatsapp'\);/);
     for (const [ns, fn] of [['SessionsExtra', 'setupExtraSession'], ['SessionsWebchat', 'setupWebchatSession'], ['SessionsWhatsapp', 'setupWhatsappSession']]) {
       assert.doesNotMatch(MAIN, new RegExp(`(?<![.\\w])${fn}\\(`), `${fn} sin prefijo`);
       assert.ok(MAIN.includes(`${ns}.${fn}()`), `${ns}.${fn}() no se llama`);
@@ -239,7 +239,7 @@ describe('sessions/* — el cableado en main.js', () => {
 
   test('Extra se llama al crear la sesion y al arrancar, y WebChat/WhatsApp una vez', () => {
     // sessions:create engancha la nueva y vive en sessions/ipc.js desde el
-    // paso 14; el arranque engancha las guardadas y sigue en main.js.
+    // paso 14; el arranque engancha las guardadas y sigue en bootstrap.js.
     const crear = IPC.match(/SessionsExtra\.setupExtraSession\(session\.fromPartition\(Sessions\.extraSessionPartition\(id\)\)\)/g) || [];
     const arranque = MAIN.match(/SessionsExtra\.setupExtraSession\(session\.fromPartition\(Sessions\.extraSessionPartition\(s\.id\)\)\)/g) || [];
     assert.equal(crear.length, 1, 'sessions:create');
@@ -314,12 +314,12 @@ describe('sessions/ipc.js -- los handlers de limpieza son operacion global', () 
 });
 
 describe('sessions/ipc.js -- el registro', () => {
-  test('main.js lo requiere y lo registra', () => {
-    assert.match(MAIN, /const SessionsIpc = require\('\.\/src\/main\/sessions\/ipc'\);/);
+  test('bootstrap.js lo requiere y lo registra', () => {
+    assert.match(MAIN, /const SessionsIpc = require\('\.\/sessions\/ipc'\);/);
     assert.match(MAIN, /SessionsIpc\.registerSessionsIpc\(\);/);
   });
 
-  test('los 11 canales se fueron de main.js', () => {
+  test('los 11 canales se fueron de bootstrap.js', () => {
     const canales = [
       'clear-cookies', 'clear-cache', 'sessions:list', 'sessions:create',
       'sessions:rename', 'sessions:set-color', 'sessions:delete',
@@ -327,11 +327,11 @@ describe('sessions/ipc.js -- el registro', () => {
     ];
     for (const canal of canales) {
       assert.ok(IPC.includes(`ipcMain.handle('${canal}'`), `${canal} no esta en sessions/ipc.js`);
-      assert.doesNotMatch(MAIN, new RegExp(`ipcMain\\.handle\\('${canal}'`), `${canal} sigue en main.js`);
+      assert.doesNotMatch(MAIN, new RegExp(`ipcMain\\.handle\\('${canal}'`), `${canal} sigue en bootstrap.js`);
     }
   });
 
-  test('la paleta no se duplica: vive en el modulo y no queda en main.js', () => {
+  test('la paleta no se duplica: vive en el modulo y no queda en bootstrap.js', () => {
     assert.match(IPC, /module\.exports = \{ registerSessionsIpc, SESSION_COLOR_PALETTE \};/);
     assert.doesNotMatch(MAIN, /SESSION_COLOR_PALETTE/);
   });

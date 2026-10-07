@@ -12,13 +12,13 @@ const MOD = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'net', 'cookie-guard.js'),
   'utf8'
 );
-const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const MAIN = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
 const PART = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'sessions', 'partitions.js'),
   'utf8'
 );
 // headers.js importa cookieRemovalUrl de este modulo: uno de los 8 usos vive
-// alli desde el paso 11, no en main.js.
+// alli desde el paso 11, no en bootstrap.js.
 const HEADERS = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'net', 'headers.js'),
   'utf8'
@@ -103,7 +103,7 @@ describe('net/cookie-guard.js - el filtro de sesiones', () => {
 
   // Si alguien reintrodujera el parametro, uno de los cuatro call sites se
   // quedaria sin filtro y el script se inyectaria donde antes no estaba.
-  test('los 4 call sites de main.js ya no pasan predicado', () => {
+  test('los 4 call sites de bootstrap.js ya no pasan predicado', () => {
     const llamadas = MAIN.match(/CookieGuard\.refreshCookieGuards\(\)/g) || [];
     assert.equal(llamadas.length, 4, 'update-cfg, add-cookie-rule, remove-cookie-rule, arranque');
     assert.doesNotMatch(MAIN, /refreshCookieGuards\(esWebviewProtegido\)/);
@@ -144,7 +144,7 @@ describe('net/cookie-guard.js — el script inyectado', () => {
 });
 
 describe('net/cookie-guard.js — API exportada', () => {
-  test('exporta lo que main.js consume', () => {
+  test('exporta lo que bootstrap.js consume', () => {
     assert.match(MOD, /module\.exports\s*=\s*\{[\s\S]*?cookieRemovalUrl,[\s\S]*?updateCookieGuard,[\s\S]*?refreshCookieGuards,[\s\S]*?applyCookiePolicy,[\s\S]*?\};/);
   });
 
@@ -154,7 +154,7 @@ describe('net/cookie-guard.js — API exportada', () => {
     const enHeaders = HEADERS.match(/(?<![.\w])cookieRemovalUrl\(/g) || [];
     assert.equal(enIpc.length + enMain.length + enHeaders.length, 8, 'el total no debe cambiar al mover codigo');
     assert.equal(enIpc.length, 5, 'los de limpieza de sesion pasaron al paso 14');
-    assert.equal(enMain.length, 2, 'en main.js quedan los de cookies por sitio');
+    assert.equal(enMain.length, 2, 'en bootstrap.js quedan los de cookies por sitio');
     // Y ningun llamada sin calificar, en ninguno de los tres ficheros.
     assert.doesNotMatch(SESSIONS_IPC, /(?<![.\w])cookieRemovalUrl\(/);
     assert.doesNotMatch(MAIN, /(?<![.\w])cookieRemovalUrl\(/);

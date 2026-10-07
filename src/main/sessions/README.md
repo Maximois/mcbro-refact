@@ -18,12 +18,11 @@ común habría fingido un modelo que no está.
 ## `ipc.js`: por qué export/import se quedaron fuera
 
 Los canales `export-session` e `import-session` también son de sesión, pero
-siguen en `main.js`. Necesitan `DATA_DIR`, que está atado al bloque que fija
-`app.setPath('userData')` y solo tiene sentido en el arranque. Moverlo ahora
-obligaría a exportar ese dato y a que la ruta de datosviviera en dos sitios, que
-es justo lo que rompió el paso 1 (ver `docs/RESTRUCTURACION.md` 2.5). Se
-mueven cuando ese bloque vaya a `bootstrap.js` (paso 28), que es cuando
-`DATA_DIR` tendrá un módulo dueño.
+siguen en `bootstrap.js`, no aquí. Necesitan `DATA_DIR`, y el paso 28 dejó ese
+bloque (y `DATA_DIR`) dentro de `bootstrap.js`: el módulo dueño existe y es el
+arranque del proceso, así que export/import no tienen que moverse. Hacerlo
+obligaría a exportar ese dato y a que la ruta de datos viviera en dos sitios,
+que es justo lo que rompió el paso 1 (ver `docs/RESTRUCTURACION.md` 2.5).
 
 ## La limpieza es global, y por eso parece un bug
 
@@ -147,7 +146,8 @@ Las dos excepciones son `config` y `runtime`, y están justificadas:
 
 - **`config`**: `loadCfg()` corre *dentro* de `config/index.js` al requerirlo, así
   que `CFG` ya viene fusionado con `cfg.json` cuando termina el `require`.
-  Destructurarlo es seguro. Ver `main.js:12-17` y el punto 2.1 del plan.
+  Destructurarlo es seguro. Ver el punto 2.1 del plan (el require original
+   estaba en `main.js:12-17`).
 - **`runtime`**: `mainWin` se asigna tarde, así que se accede por
   `getMainWin()`; lo que sí se destructura son las funciones, que no se
   reasignan. `ACTIONS` es un objeto que se muta, y la mutación se ve igual a

@@ -9,7 +9,7 @@ const MOD = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'net', 'request-guard.js'),
   'utf8'
 );
-const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const MAIN = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
 const codigo = MOD.slice(MOD.indexOf('*/') + 2);
 
 // Regresion del movimiento mecanico: un caracter perdido dentro de un regex no
@@ -22,7 +22,7 @@ describe('net/request-guard.js — el cuerpo movido', () => {
     assert.doesNotMatch(codigo, /split\(\/\[\?#\]\)/);
   });
 
-  test('los dos helpers viajan con el guardian, no se quedan en main.js', () => {
+  test('los dos helpers viajan con el guardian, no se quedan en bootstrap.js', () => {
     assert.match(MOD, /function stripUrlQuery\(url\) \{/);
     assert.match(MOD, /function requestDocumentUrl\(details\) \{/);
     assert.doesNotMatch(MAIN, /function stripUrlQuery\(/);
@@ -30,9 +30,9 @@ describe('net/request-guard.js — el cuerpo movido', () => {
   });
 
   test('las dos sesiones que lo usan lo llaman, cada una en su sitio', () => {
-    // La principal se monta en modules-loader.js desde main.js; la extra, desde
+    // La principal se monta en modules-loader.js desde bootstrap.js; la extra, desde
     // su modulo de sesion (paso 13).
-    // El nombre se busca sin prefijo a proposito: main.js lo llama como
+    // El nombre se busca sin prefijo a proposito: bootstrap.js lo llama como
     // RequestGuard.createRequestGuard() y extra.js lo importa suelto, y los dos
     // estilos son validos. Lo que no vale es que se llame sin haberla importado.
     const loader = fs.readFileSync(
@@ -42,7 +42,7 @@ describe('net/request-guard.js — el cuerpo movido', () => {
     assert.match(loader, /RequestGuard\.createRequestGuard\(\)/);
     assert.match(
       MAIN,
-      /const RequestGuard = require\('\.\/src\/main\/net\/request-guard'\);/
+      /const RequestGuard = require\('\.\/net\/request-guard'\);/
     );
     const extra = fs.readFileSync(
       path.join(__dirname, '..', 'src', 'main', 'sessions', 'extra.js'),

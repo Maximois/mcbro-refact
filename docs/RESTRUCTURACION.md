@@ -100,16 +100,18 @@ cambiar semántica; queda anotado como cambio cosmético para que el diff siga s
 ### 2.5 `app.setPath('userData')` debe seguir siendo lo primero
 
 **Esta regla se incumplio y rompio la app.** El plan lo decia y el arreglo que
-proponia (`src/main/bootstrap.js` como primer require) es el paso 28, que aun no
-existe: asi que nadie lo aplico y nadie lo noto.
+proponia (`src/main/bootstrap.js` como primer require) es el **paso 28, ya
+ejecutado**: el ciclo vida ahora arranca desde `bootstrap.js` con el bloque
+`DATA_DIR`+`setPath` como primera linea de proyecto.
 
-Como queda hoy, `main.js` fija la carpeta de datos en las lineas 27-28, justo
-despues de los builtins y **antes del primer require de proyecto**:
+En el estado pre-refactor fijaba la carpeta de datos `main.js` en las lineas
+27-28. Desde el paso 28 el bloque vive en `src/main/bootstrap.js`, con el mismo
+orden: builtins, `DATA_DIR`+`setPath`, y recien entonces los require de proyecto:
 
 ```
-3-7    require de electron, path, fs, child_process, crypto
-27-28  DATA_DIR + app.setPath('userData', ...)
-31+    require('./modules/...'), require('./src/main/config'), data/bookmarks, data/history...
+builtins  require de electron, path, fs, child_process, crypto
+inicio    DATA_DIR + app.setPath('userData', ...)   // 1a linea de proyecto
+despues   require('./config'), data/bookmarks, data/history, modules...
 ```
 
 El orden importa porque `config`, `data/bookmarks` y `data/history` calculan su
@@ -142,7 +144,7 @@ habia creado en la carpeta equivocada durante las pruebas de humo.
 - `test/data-paths.test.js` mira el ORDEN del fuente: el `setPath` tiene que ir
   antes del primer `require('./`. Verificado con `git stash`: el test dice
   "setPath en la linea 76 y el primer require de proyecto en la 8".
-- `tools/boot-smoke.js` mira en EJECUCION. `main.js` imprime una linea `[DATA]`
+- `tools/boot-smoke.js` mira en EJECUCION. `bootstrap.js` imprime una linea `[DATA]`
   con `userData` y las tres rutas ya resueltas, y el smoke falla si alguna no cae
   dentro de la carpeta de la build. Verificado emulando el bug: el smoke nombra
   las tres rutas fuera de sitio y sale con codigo 1.
@@ -176,7 +178,7 @@ después.
 ## 3. Estructura destino
 
 ```
-main.js                       entrypoint delgado: fija userData, arranca bootstrap
+main.js                       entrypoint delgado: arranca bootstrap
 src/main/
   README.md                   índice, mapa de responsabilidades, invariantes y trampas
   bootstrap.js                ciclo de vida, GPU, protocolos de SO, argv, whenReady
@@ -256,7 +258,7 @@ cada commit es un cambio mecánico verificable.
 | 13c | `downloads/native.js` | 13b | `Extraer descargas nativas` |
 | 13d | `sessions/extra.js`, `webchat.js`, `whatsapp.js` | 13, 13b, 13c | `Extraer el setup de cada sesion aislada` |
 | 14 | `sessions/ipc.js` | 2, 13 | `Extraer IPC de sesiones y limpieza de datos` | HEcho |
-| 14b | `sessions/ipc.js` (export/import) | 14, 28 | `Mover export/import cuando DATA_DIR tenga modulo dueno` | Pendiente |
+| 14b | `sessions/ipc.js` (export/import) | 14, 28 | `Mover export/import; DATA_DIR ya tiene dueno (bootstrap.js, paso 28)` | Pendiente (opcional: bootstrap es el dueno y los conserva) |
 | 15 | `downloads/registry.js`, `downloads/fetch.js` | config | `Extraer registro y transporte de descargas` | Hecho |
 | 16 | `downloads/hls.js` | 15, lib/hls-resume | `Extraer descarga HLS` | Hecho |
 | 17 | `downloads/file.js` | 15 | `Extraer descarga de archivo directo` | Hecho |
@@ -270,7 +272,7 @@ cada commit es un cambio mecánico verificable.
 | 25 | `perchance/panel.js` | 5, 13 | `Extraer panel de Perchance` | Hecho |
 | 26 | `ipc/window.js`, `external.js` | 6 | `Extraer IPC de ventana y argv` | Hecho |
 | 27 | `modules-loader.js` | todo | `Extraer registro de modulos` | Hecho |
-| 28 | `bootstrap.js` + `main.js` | todo | `Convertir main.js en entrypoint delgado` |
+| 28 | `bootstrap.js` + `main.js` | todo | `Convertir main.js en entrypoint delgado` | Hecho |
 | 29 | docs | — | `Documentar src/main y actualizar la guia` |
 
 ### 4.1 Verificación por commit

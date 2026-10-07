@@ -6,13 +6,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const WEB = leer('src', 'main', 'windows', 'webcontents.js');
 const CTX = leer('src', 'main', 'windows', 'context-menu.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('windows/context-menu.js -- la extraccion', () => {
-  test('main.js no queda con el bloque wc.on context-menu', () => {
+  test('bootstrap.js no queda con el bloque wc.on context-menu', () => {
     assert.doesNotMatch(MAIN, /wc\.on\('context-menu'/);
     assert.match(WEB, /const WindowsContextMenu = require\('\.\/context-menu'\);/);
     assert.match(WEB, /WindowsContextMenu\.installContextMenu\(wc, \{ saveBlobOrDataUrlToDownloads, resolveCtxCssPoint \}\);/);
@@ -33,7 +33,7 @@ describe('windows/context-menu.js -- la extraccion', () => {
     assert.match(CTX, /Menu\.buildFromTemplate\(template\)\.popup\(/);
   });
 
-  test('las dos funciones del externo se inyectan, y son las de main.js', () => {
+  test('las dos funciones del externo se inyectan, y son las de bootstrap.js', () => {
     assert.match(codigo(CTX), /const \{ saveBlobOrDataUrlToDownloads, resolveCtxCssPoint \} = deps;/);
     assert.match(codigo(CTX), /saveBlobOrDataUrlToDownloads\(wc, linkUrl, params\.linkText/);
     assert.match(codigo(CTX), /saveBlobOrDataUrlToDownloads\(wc, params\.srcURL, 'imagen', params\.frame\)/);
@@ -64,14 +64,14 @@ describe('windows/context-menu.js -- la extraccion', () => {
     assert.match(codigo(CTX), /part \+= '\.' \+ \[\.\.\.cur\.classList\]\.slice\(0, 3\)\.map\(c => CSS\.escape\(c\)\)\.join\('\.'\);/);
   });
 
-  test('no aparecen los nombres de electron envueltos por main.js sino por este', () => {
+  test('no aparecen los nombres de electron envueltos por bootstrap.js sino por este', () => {
     assert.match(CTX, /const fs = require\('fs'\);/);
     assert.match(CTX, /const path = require\('path'\);/);
     assert.match(CTX, /const \{ app, Menu, clipboard, dialog \} = require\('electron'\);/);
     assert.match(CTX, /const \{ ACTIONS, getMainWin \} = require\('\.\.\/runtime'\);/);
     assert.match(CTX, /const \{ CFG, saveCfg \} = require\('\.\.\/config'\);/);
     assert.match(CTX, /const Sessions = require\('\.\.\/sessions\/partitions'\);/);
-    // Y main.js conserva las dos funciones que el modulo no se llevo.
+    // Y bootstrap.js conserva las dos funciones que el modulo no se llevo.
     assert.match(WEB, /WindowsContextMenu\.installContextMenu\(wc, \{/);
     assert.match(MAIN, /saveBlobOrDataUrlToDownloads,\s*\n\s*resolveCtxCssPoint/);
   });

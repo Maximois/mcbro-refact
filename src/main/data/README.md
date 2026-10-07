@@ -53,7 +53,7 @@ escritura siempre `store.items = ...`. Nunca destructures `items`.
 
 ## Trampas
 
-### La ruta se calcula AL CARGARSE, y eso ata las manos al orden de main.js
+### La ruta se calcula AL CARGARSE, y eso ata las manos al orden del arranque
 
 `BOOKMARKS_PATH` e `HISTORY_PATH` se calculan en el cuerpo del modulo:
 
@@ -61,9 +61,10 @@ escritura siempre `store.items = ...`. Nunca destructures `items`.
 const HISTORY_PATH = path.join(app.getPath('userData'), 'history.json');
 ```
 
-Es decir: en el `require`, no cuando se usa. Por eso `main.js` tiene que haber
-llamado a `app.setPath('userData', ...)` ANTES de requerirlos, y por eso el
-`setPath` esta en las lineas 27-28, antes de cualquier require de proyecto.
+Es decir: en el `require`, no cuando se usa. Por eso el arranque llama a
+`app.setPath('userData', ...)` ANTES de requerirlos: `src/main/bootstrap.js` pone
+el bloque `DATA_DIR`+`setPath` como primera linea de proyecto, antes de cualquier
+require de este estilo.
 
 Cuando se extrajeron estos modulos se dejaron despues del `setPath` y la app
 resolvio a la carpeta por defecto durante semanas: abria con el historial vacio y
@@ -73,7 +74,7 @@ Lo que lo fija ahora:
 
 - `test/data-paths.test.js` comprueba el orden en el fuente.
 - `tools/boot-smoke.js` comprueba las rutas en ejecucion, con la linea `[DATA]`
-  que imprime `main.js`.
+  que imprime `bootstrap.js`.
 
 Si alguna vez hay que calcular la ruta mas tarde (por ejemplo para que el test
 pueda requerir el modulo sin Electron), hay que quitar a la vez las dos

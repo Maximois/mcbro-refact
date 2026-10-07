@@ -9,8 +9,8 @@ const MOD = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'downloads', 'native.js'),
   'utf8'
 );
-const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-// El docstring del modulo nombra el estado que main.js ya no debe tener, asi
+const MAIN = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
+// El docstring del modulo nombra el estado que bootstrap.js ya no debe tener, asi
 // que las ausencias se buscan solo en el codigo, tras el primer */.
 const codigo = MOD.slice(MOD.indexOf('*/') + 2);
 
@@ -82,16 +82,16 @@ describe('downloads/native.js - el modulo', () => {
   });
 });
 
-describe('downloads/native.js - el cableado en main.js', () => {
+describe('downloads/native.js - el cableado en bootstrap.js', () => {
   test('las dos sesiones que capturan descargas lo llaman, cada una en su sitio', () => {
-    // Principal desde main.js; la extra desde su modulo (paso 13). Se busca sin
+    // Principal desde bootstrap.js; la extra desde su modulo (paso 13). Se busca sin
     // prefijo porque los dos estilos de importacion son validos en este repo.
     const extra = fs.readFileSync(
       path.join(__dirname, '..', 'src', 'main', 'sessions', 'extra.js'),
       'utf8'
     );
     assert.match(MAIN, /DownloadsNative\.registerNativeDownloadHandler\(sess\);/);
-    assert.match(MAIN, /const DownloadsNative = require\('\.\/src\/main\/downloads\/native'\);/);
+    assert.match(MAIN, /const DownloadsNative = require\('\.\/downloads\/native'\);/);
     assert.match(extra, /registerNativeDownloadHandler\(sess\);/);
     assert.match(extra, /require\('\.\.\/downloads\/native'\)/);
     const total = (MAIN + extra).match(/(?:\w+\.)?registerNativeDownloadHandler\(sess\);/g) || [];
@@ -99,15 +99,15 @@ describe('downloads/native.js - el cableado en main.js', () => {
     assert.equal(CUENTA(/DownloadsNative\.registerNativeDownloadIpc\(\);/g), 1);
   });
 
-  test('ninguna llamada sin cualificar en main.js', () => {
+  test('ninguna llamada sin cualificar en bootstrap.js', () => {
     // Sin prefijo seria ReferenceError en runtime: la funcion ya no existe alli.
     assert.doesNotMatch(MAIN, /(?<![.\w])registerNativeDownloadHandler\(/);
     assert.doesNotMatch(MAIN, /(?<![.\w])registerNativeDownloadIpc\(/);
   });
 
-  test('el handler y su estado desaparecieron de main.js', () => {
+  test('el handler y su estado desaparecieron de bootstrap.js', () => {
     // Si se quedara una COPIA del Map, las dos se desincronizan en silencio:
-    // el modulo registraria descargas que main.js no ve.
+    // el modulo registraria descargas que bootstrap.js no ve.
     assert.doesNotMatch(MAIN, /nativeDlRegistry/);
     assert.doesNotMatch(MAIN, /pendingNativeRetryId/);
     assert.doesNotMatch(MAIN, /function registerNativeDownloadHandler/);
@@ -116,7 +116,7 @@ describe('downloads/native.js - el cableado en main.js', () => {
   test('los canales de control no se registran dos veces', () => {
     // Un ipcMain.handle repetido sobre el mismo canal lanza al arrancar.
     for (const ch of CANALES) {
-      assert.ok(!MAIN.includes(`'${ch}'`), `${ch} sigue registrado a mano en main.js`);
+      assert.ok(!MAIN.includes(`'${ch}'`), `${ch} sigue registrado a mano en bootstrap.js`);
     }
   });
 

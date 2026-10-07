@@ -13,13 +13,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const FILE = leer('src', 'main', 'downloads', 'file.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('downloads/file.js -- la extraccion', () => {
-  test('main.js lo registra y dl-file se fue de ahi', () => {
-    assert.match(MAIN, /const DownloadsFile = require\('\.\/src\/main\/downloads\/file'\);/);
+  test('bootstrap.js lo registra y dl-file se fue de ahi', () => {
+    assert.match(MAIN, /const DownloadsFile = require\('\.\/downloads\/file'\);/);
     assert.match(MAIN, /DownloadsFile\.registerFileDownloadIpc\(\);/);
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('dl-file'/);
     assert.match(FILE, /ipcMain\.handle\('dl-file'/);
@@ -40,12 +40,12 @@ describe('downloads/file.js -- la extraccion', () => {
       'ensureFfmpegAvailable', 'inspectMediaFile', 'remuxToMp4', 'transcodeToMp4',
       'isUsableMp4', 'detectMediaInputFormat', 'resolveMediaInputFormat', 'finalizeMediaFile']) {
       assert.match(FFMPEG, new RegExp(`function ${fn}\\(`), `${fn} deberia estar en ffmpeg.js`);
-      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} no deberia quedar en main.js`);
+      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} no deberia quedar en bootstrap.js`);
       assert.doesNotMatch(FILE, new RegExp(`function ${fn}\\(`), `${fn} no deberia estar en file.js`);
     }
   });
 
-  test('main.js solo conserva los dos canales de ffmpeg', () => {
+  test('bootstrap.js solo conserva los dos canales de ffmpeg', () => {
     // Se quedan porque son de una linea y MainWindow los llama. Lo que ya no
     // esta es la implementacion.
     assert.match(MAIN, /ipcMain\.handle\('ffmpeg-check', \(\) => \(\{ found: !!DownloadsFfmpeg\.findFfmpeg\(\), path: DownloadsFfmpeg\.findFfmpeg\(\) \|\| '' \}\)\);/);

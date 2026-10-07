@@ -116,7 +116,7 @@ El orden importa: el adblocker decide *primero* (`isAggressiveAdNavigation`,
 
 ## Lo que NO se movió
 
-`isPerchanceHost` e `isPerchanceRuntimeHost` siguen en `main.js`. Son predicados
+`isPerchanceHost` e `isPerchanceRuntimeHost` siguen en `bootstrap.js`. Son predicados
 del panel de Perchance, no de navegación en general, y viajan con
 `perchance/panel.js` (paso 27). El segundo es **código muerto**: devuelve `false`
 siempre, a propósito, y su comentario explica por qué filtrar el panel por

@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const YTDLP = leer('tools', 'ytdlp.js');
 const FFMPEG = leer('src', 'main', 'downloads', 'ffmpeg.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2).replace(/\r\n/g, '\n');
@@ -21,19 +21,19 @@ const PRELOAD = leer('preload.js');
 const RENDERER = leer('src', 'renderer.html');
 
 describe('tools/ytdlp.js -- la extraccion', () => {
-  test('main.js lo carga y lo registra una vez', () => {
-    assert.match(MAIN, /const YtDlp = require\('\.\/tools\/ytdlp'\);/);
+  test('bootstrap.js lo carga y lo registra una vez', () => {
+    assert.match(MAIN, /const YtDlp = require\('\.\.\/\.\.\/tools\/ytdlp'\);/);
     assert.match(MAIN, /YtDlp\.registerYtdlpIpc\(\);/);
     // Una sola llamada. El require es `require('./tools/ytdlp')` y no lleva el
     // nombre de la funcion, asi que no cuenta aqui.
     assert.equal((MAIN.match(/registerYtdlpIpc\(\)/g) || []).length, 1);
   });
 
-  test('los cinco helpers se fueron de main.js', () => {
+  test('los cinco helpers se fueron de bootstrap.js', () => {
     for (const fn of ['findYtdlp', 'isYtdlpNativeLoginHost', 'writeYtdlpCookiesFile',
       'cleanupYtdlpCookiesFile']) {
       assert.match(YTDLP, new RegExp(`function ${fn}\\(`), `${fn} deberia estar en ytdlp.js`);
-      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en main.js`);
+      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en bootstrap.js`);
     }
     assert.match(YTDLP, /const YTDLP_NATIVE_LOGIN_HOSTS = \/\(\^\|\\\.\)instagram/);
     assert.doesNotMatch(MAIN, /YTDLP_NATIVE_LOGIN_HOSTS/);
@@ -48,7 +48,7 @@ describe('tools/ytdlp.js -- la extraccion', () => {
     for (const ch of ['ytdlp-check', 'ytdlp-version', 'ytdlp-install', 'ytdlp-analyze', 'ytdlp-download']) {
       assert.match(YTDLP, new RegExp(`ipcMain\\.handle\\('${ch}'`), `falta el canal ${ch}`);
     }
-    // Y ninguno quedo en main.js.
+    // Y ninguno quedo en bootstrap.js.
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('ytdlp-/);
   });
 
@@ -70,9 +70,9 @@ describe('tools/ytdlp.js -- la extraccion', () => {
     assert.ok(RENDERER.includes('ytdlp-install-btn'));
   });
 
-  test('ytdlp-log se sigue emitiendo, y main.js tambien lo usa', () => {
+  test('ytdlp-log se sigue emitiendo, y bootstrap.js tambien lo usa', () => {
     // El renderer esta suscrito a este evento. ffmpeg.js lo emite para sus
-    // avisos y hay una linea en main.js que tambien lo usa, asi que no se puede
+    // avisos y hay una linea en bootstrap.js que tambien lo usa, asi que no se puede
     // "normalizar" el nombre sin tocar las tres cosas.
     assert.match(YTDLP, /ACTIONS\.emit\('ytdlp-log'/);
     assert.match(FFMPEG, /ACTIONS\.emit\?\.\('ytdlp-log'/);

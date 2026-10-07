@@ -14,7 +14,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const REG = leer('src', 'main', 'downloads', 'registry.js');
 const FETCH = leer('src', 'main', 'downloads', 'fetch.js');
 const HLS = leer('src', 'main', 'downloads', 'hls.js');
@@ -26,12 +26,12 @@ const FILE = leer('src', 'main', 'downloads', 'file.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('downloads/registry.js -- el registro de descargas', () => {
-  test('los tres canales de control se fueron de main.js', () => {
-    assert.match(MAIN, /const DownloadsRegistry = require\('\.\/src\/main\/downloads\/registry'\);/);
+  test('los tres canales de control se fueron de bootstrap.js', () => {
+    assert.match(MAIN, /const DownloadsRegistry = require\('\.\/downloads\/registry'\);/);
     assert.match(MAIN, /DownloadsRegistry\.registerDownloadControlIpc\(\);/);
     for (const canal of ['dl-pause', 'dl-resume', 'dl-cancel']) {
       assert.ok(REG.includes(`ipcMain.handle('${canal}'`), `${canal} no esta en registry.js`);
-      assert.doesNotMatch(MAIN, new RegExp(`ipcMain\\.handle\\('${canal}'`), `${canal} sigue en main.js`);
+      assert.doesNotMatch(MAIN, new RegExp(`ipcMain\\.handle\\('${canal}'`), `${canal} sigue en bootstrap.js`);
     }
   });
 
@@ -88,7 +88,7 @@ describe('downloads/registry.js -- el registro de descargas', () => {
 
 describe('downloads/registry.js -- los bucles de descarga lo usan bien', () => {
 // dl-hls se movió en el paso 16 y dl-file en el 17, así que los dos bucles de
-  // descarga ya no están en el mismo archivo, ni en main.js. Lo que se fija aquí
+  // descarga ya no están en el mismo archivo, ni en bootstrap.js. Lo que se fija aquí
   // es el invariante conjunto: los dos leen el signal en cada petición, los dos
   // borran su entrada, y los dos se registran con un tipo distinto.
   const BUCLES = HLS + '\n' + FILE;
@@ -130,8 +130,8 @@ describe('downloads/registry.js -- los bucles de descarga lo usan bien', () => {
 });
 
 describe('downloads/fetch.js -- el transporte', () => {
-  test('se fue de main.js y se importa con prefijo', () => {
-    assert.match(MAIN, /const DownloadsFetch = require\('\.\/src\/main\/downloads\/fetch'\);/);
+  test('se fue de bootstrap.js y se importa con prefijo', () => {
+    assert.match(MAIN, /const DownloadsFetch = require\('\.\/downloads\/fetch'\);/);
     assert.doesNotMatch(MAIN, /(?<![\w.])chromiumFetch\(/);
     assert.doesNotMatch(MAIN, /(?<![\w.])mediaRequestHeaders\(/);
     assert.doesNotMatch(MAIN, /(?<![\w.])getSessionFetch\(/);

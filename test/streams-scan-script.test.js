@@ -1,6 +1,6 @@
 'use strict';
 
-// STREAM_SCAN_SCRIPT vive dentro de un template literal en main.js y se
+// STREAM_SCAN_SCRIPT vive dentro de un template literal en bootstrap.js y se
 // ejecuta en la pagina del webview. Un backslash sin escapar ( \/ , \. , \d )
 // se pierde al cocinar el literal y rompe el parseo del script entero: el
 // handler 'streams:scan' cae al catch y devuelve [] para siempre, asi que el
@@ -15,12 +15,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const MAIN = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
 
 function extraerScanScript() {
   const marca = 'const STREAM_SCAN_SCRIPT = `';
   const inicio = MAIN.indexOf(marca);
-  assert.ok(inicio > -1, 'main.js debe definir STREAM_SCAN_SCRIPT');
+  assert.ok(inicio > -1, 'bootstrap.js debe definir STREAM_SCAN_SCRIPT');
   const desde = inicio + marca.length;
   const cierre = MAIN.slice(desde).match(/`;\r?\n/);
   assert.ok(cierre, 'STREAM_SCAN_SCRIPT debe cerrar con un backtick');
@@ -139,7 +139,7 @@ describe('STREAM_SCAN_SCRIPT -- el script inyectado en el webview', () => {
     assert.equal(typeof contexto.XMLHttpRequest.prototype.open, 'function');
   });
 
-  test('main.js devuelve la promesa del webview en vez de un array vacio', () => {
+  test('bootstrap.js devuelve la promesa del webview en vez de un array vacio', () => {
     // Sin return, el handler devolveria undefined y el renderer no tendria
     // nada que parsear aunque el script del webview haya encontrado medias.
     assert.match(MAIN, /return wv\.executeJavaScript\(\$\{JSON\.stringify\(STREAM_SCAN_SCRIPT\)\}\)/);

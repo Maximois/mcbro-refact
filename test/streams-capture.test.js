@@ -9,25 +9,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const CAPTURE = leer('src', 'main', 'streams', 'capture.js');
 const HEADERS = leer('src', 'main', 'net', 'headers.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('streams/capture.js -- la extraccion', () => {
-  test('main.js lo registra y los helpers ya no viven alli', () => {
-    assert.match(MAIN, /const StreamCapture = require\('\.\/src\/main\/streams\/capture'\);/);
+  test('bootstrap.js lo registra y los helpers ya no viven alli', () => {
+    assert.match(MAIN, /const StreamCapture = require\('\.\/streams\/capture'\);/);
     assert.match(MAIN, /StreamCapture\.registerStreamCaptureIpc\(\);/);
     for (const fn of ['findHlsPlayerEntry', 'findStreamEntryReferer', 'consumeStreamEntryReferer']) {
       assert.match(CAPTURE, new RegExp(`function ${fn}\\(`), `${fn} deberia estar en capture.js`);
-      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en main.js`);
+      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en bootstrap.js`);
     }
     assert.doesNotMatch(MAIN, /streamPlayerReferers = new Map/);
     assert.doesNotMatch(MAIN, /streamEntryReferers = new Map/);
     assert.doesNotMatch(MAIN, /let streamHlsCaptureEnabled/);
   });
 
-  test('los tres handlers ya no estan en main.js', () => {
+  test('los tres handlers ya no estan en bootstrap.js', () => {
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('streams:hls-capture'/);
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('streams:hls-player-referer'/);
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('streams:entry-referer'/);
@@ -43,7 +43,7 @@ describe('streams/capture.js -- la extraccion', () => {
     assert.match(HEADERS, /const \{ isStreamHlsCaptureEnabled, consumeStreamEntryReferer, findHlsPlayerEntry \} = deps;/);
   });
 
-  test('streams:scan se quedo en main.js: no cierra nada de aqui', () => {
+  test('streams:scan se quedo en bootstrap.js: no cierra nada de aqui', () => {
     // El scanner lista streams en una pagina, no los captura. Su flujo
     // depende del renderer y del adblocker, y el plan no lo pide.
     assert.match(MAIN, /ipcMain\.handle\('streams:scan'/);

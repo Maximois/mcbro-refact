@@ -132,25 +132,24 @@ mismo snapshot cacheado.
 El comentario *"única llamada a `app.getAppMetrics()` de toda la app"*, dentro de
 `sampleProcessMetrics()`, es **load-bearing**. Si alguien más la hace, esto se rompe.
 
-## Lo que NO se corrigió (bugs preexistentes, documentados a propósito)
+## Los escapes dobles de `STREAM_SCAN_SCRIPT` (corregido en el paso 28)
 
-### `STREAM_SCAN_SCRIPT` genera JS inválido
-
-`main.js` inyecta este script en la página con `executeJavaScript`. Dentro de una
-plantilla literal, `\d` se consume y queda `d`, y `\/\/` queda `//`. Resultado,
+`bootstrap.js` inyecta este script en la página con `executeJavaScript`. Dentro de
+una plantilla literal, `\d` se consume y queda `d`, y `\/\/` queda `//`. Resultado,
 una vez evaluada la plantilla:
 
 ```js
 /^https?://(x.com|twitter.com)/[^/]+/status/d+/video//i   // SyntaxError
 ```
 
-Está en el original desde `b8e0704` (verificado), así que la extracción no lo
-tocó — `isMedia` es byte a byte idéntico a la base. Rompe el escaneo de streams en
-silencio, probablemente porque la llamada va envuelta en `try/catch`.
+El original (`git show HEAD:main.js`) tiene los escapes correctos y el test lo
+fija. La copia de `bootstrap.js` (que entonces era una copia inactiva) los perdió:
+al cocinar el string daba `/^/(` y `SyntaxError: Numeric separators are not allowed
+at the end of numeric literals`. El paso 28 restauró el bloque completo desde
+`main.js`, y el test de `streams-scan-script` valida el cocinado.
 
-Lo mismo pasó con las tres regex de media de esa plantilla (`MEDIA_RE`, `SKIP_EXT`),
-que usan barras dobles a propósito. `STREAM_SCAN_SCRIPT` es la única copia del
-patrón que viaja al proceso de la página: **no puede compartir la variable con
-`media-detect.js`**, de ahí que el mismo regex esté escrito dos veces.
-
-Arreglarlo es un commit aparte, con su propia prueba.
+Las tres regex de media de esa plantilla (`MEDIA_RE`, `SKIP_EXT`) usan barras
+dobles a propósito. `STREAM_SCAN_SCRIPT` es la única copia del patrón que viaja al
+proceso de la página: **no puede compartir la variable con `media-detect.js`**,
+de ahí que el mismo regex esté escrito dos veces. Si se toca, mantener el doble
+escape en todas las líneas del bloque.

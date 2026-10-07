@@ -4,7 +4,7 @@
 // puede importar en un test de node plano sin arrancar un Electron. Estos tests
 // leen el fuente.
 //
-// Los que importan de verdad son los de main.js: la prueba de que el bloque se
+// Los que importan de verdad son los de bootstrap.js: la prueba de que el bloque se
 // movio entero esta en el test de la extraccion, que compara las once funciones.
 
 const { test, describe } = require('node:test');
@@ -13,31 +13,31 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const FFMPEG = leer('src', 'main', 'downloads', 'ffmpeg.js');
 const HLS = leer('src', 'main', 'downloads', 'hls.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('downloads/ffmpeg.js -- la extraccion', () => {
-  test('las once funciones se fueron de main.js', () => {
+  test('las once funciones se fueron de bootstrap.js', () => {
     const fns = ['findFfmpeg', 'findFfprobe', 'installFfmpegPortable', 'ensureFfmpegAvailable',
       'inspectMediaFile', 'remuxToMp4', 'transcodeToMp4', 'isUsableMp4',
       'detectMediaInputFormat', 'resolveMediaInputFormat', 'finalizeMediaFile'];
     for (const fn of fns) {
       assert.match(FFMPEG, new RegExp(`function ${fn}\\(`), `${fn} deberia estar en ffmpeg.js`);
-      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en main.js`);
+      assert.doesNotMatch(MAIN, new RegExp(`function ${fn}\\(`), `${fn} sigue en bootstrap.js`);
     }
-    // Y las once se exportan, o main.js no podria llamar a las dos que necesita.
+    // Y las once se exportan, o bootstrap.js no podria llamar a las dos que necesita.
     for (const fn of fns) {
       assert.ok(FFMPEG.includes(`  ${fn},`) || FFMPEG.includes(`  ${fn}\n`), `${fn} no se exporta`);
     }
   });
 
-  test('main.js solo usa dos de ellas, y de una linea', () => {
-    assert.match(MAIN, /const DownloadsFfmpeg = require\('\.\/src\/main\/downloads\/ffmpeg'\);/);
+  test('bootstrap.js solo usa dos de ellas, y de una linea', () => {
+    assert.match(MAIN, /const DownloadsFfmpeg = require\('\.\/downloads\/ffmpeg'\);/);
     assert.match(MAIN, /ipcMain\.handle\('ffmpeg-check', \(\) => \(\{ found: !!DownloadsFfmpeg\.findFfmpeg\(\), path: DownloadsFfmpeg\.findFfmpeg\(\) \|\| '' \}\)\);/);
     assert.match(MAIN, /ipcMain\.handle\('ffmpeg-install', \(\) => DownloadsFfmpeg\.installFfmpegPortable\(\)\);/);
-    // No mas de dos usos: si se accumulan, el bloque vuelve a main.js de a poco.
+    // No mas de dos usos: si se accumulan, el bloque vuelve a bootstrap.js de a poco.
     assert.equal((MAIN.match(/DownloadsFfmpeg\./g) || []).length, 3,
       'la referencia al modulo + los dos usos');
   });
@@ -47,12 +47,12 @@ describe('downloads/ffmpeg.js -- la extraccion', () => {
     assert.match(HLS, /function registerHlsIpc\(\)/);
     assert.match(HLS, /await Ffmpeg\.finalizeMediaFile\(rawName, fname\);/);
     assert.match(HLS, /await Ffmpeg\.finalizeMediaFile\(rawName, fname, mapMatch \? 'mp4' : 'mpegts'\);/);
-    // Y no queda ninguna llamada suelta a la variable que inyectaba main.js.
+    // Y no queda ninguna llamada suelta a la variable que inyectaba bootstrap.js.
     assert.doesNotMatch(codigo(HLS), /(?<!Ffmpeg\.)finalizeMediaFile/);
   });
 
   test('no hay ciclo: ffmpeg.js no requiere hls.js ni main.js', () => {
-    for (const m of ['./hls', './file', '../../main', 'main.js']) {
+    for (const m of ['./hls', './file', '../../main', 'main.js', 'bootstrap.js']) {
       assert.doesNotMatch(FFMPEG, new RegExp(`require\\('${m.replace(/[.\/]/g, '\\$&')}'\\)`),
         `ffmpeg.js no deberia requerir ${m}`);
     }
@@ -63,7 +63,7 @@ describe('downloads/ffmpeg.js -- la extraccion', () => {
 describe('downloads/ffmpeg.js -- TRAMPA 1: FFMPEG_DIR no se cachea', () => {
   test('sigue siendo una flecha, no un path ya resuelto', () => {
     // Si fuera `const FFMPEG_DIR = path.join(...)`, se evaluaria al cargarse el
-    // modulo. main.js cambia el userData al perfil de desarrollo en la linea 28,
+    // modulo. bootstrap.js cambia el userData al perfil de desarrollo al cargar,
     // antes de los requires, asi que hoy daria bien por casualidad. Cachearlo
     // antes de ese setPath instalaria FFmpeg en el perfil equivocado: el mismo
     // bug que se corrigio para las rutas [DATA].

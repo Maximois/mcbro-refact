@@ -10,11 +10,10 @@
  * LO QUE NO ESTA AQUI, Y POR QUE
  * -----------------------------------------------------------------------------
  * `export-session` e `import-session` tambien son de sesion, pero se quedan en
- * `main.js`: necesitan `DATA_DIR`, que esta atado al bloque que fija
- * `app.setPath('userData')` y que solo tiene sentido en el arranque. Moverlo
- * obligaria a exportar ese dato, y la regla 2.5 no admite que la ruta de datos
- * viva en dos sitios. Se moveran cuando ese bloque se vaya a `bootstrap.js`
- * (paso 28), que es cuando `DATA_DIR` tendra un modulo dueno.
+ * `bootstrap.js`, no aqui: el paso 28 dejo el bloque `DATA_DIR`+`setPath`
+ * dentro de `bootstrap.js`, asi que su modulo dueno es el arranque del proceso
+ * y no hay que moverlos. Hacerlo obligaria a exportar ese dato, y la regla 2.5
+ * no admite que la ruta de datos viva en dos sitios.
  *
  * Lo mismo con los canales de cookies por sitio (`add-cookie-rule`,
  * `get-site-cookies`, `set-site-cookie`...): son de `net/cookie-guard.js`, no de

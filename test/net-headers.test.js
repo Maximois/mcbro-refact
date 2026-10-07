@@ -11,7 +11,7 @@ const MOD = fs.readFileSync(
   path.join(__dirname, '..', 'src', 'main', 'net', 'headers.js'),
   'utf8'
 );
-const MAIN = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+const MAIN = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
 const codigo = MOD.slice(MOD.indexOf('*/') + 2);
 
 describe('net/headers.js — los tres interceptores estan en el modulo', () => {
@@ -19,14 +19,14 @@ describe('net/headers.js — los tres interceptores estan en el modulo', () => {
     assert.match(MOD, /sess\.webRequest\.onBeforeSendHeaders\(/);
     assert.match(MOD, /sess\.webRequest\.onHeadersReceived\(/);
     assert.match(MOD, /sess\.cookies\.on\('changed'/);
-    // Los tres de la sesion principal ya no estan en main.js. El de WhatsApp si
+    // Los tres de la sesion principal ya no estan en bootstrap.js. El de WhatsApp si
     // sigue, y es correcto: cuelga de waSess y se va con su sesion (paso 13).
     assert.doesNotMatch(MAIN, /sess\.webRequest\.onBeforeSendHeaders/);
     assert.doesNotMatch(MAIN, /sess\.webRequest\.onHeadersReceived/);
     assert.doesNotMatch(MAIN, /sess\.cookies\.on\('changed'/);
   });
 
-  test('el interceptor de WhatsApp vive en su sesion, no en main.js', () => {
+  test('el interceptor de WhatsApp vive en su sesion, no en bootstrap.js', () => {
     const wa = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'sessions', 'whatsapp.js'), 'utf8');
     assert.match(wa, /waSess\.webRequest\.onBeforeSendHeaders/);
     assert.match(MOD, /setHdr\('sec-ch-ua'/);
@@ -47,13 +47,13 @@ describe('net/headers.js — los tres interceptores estan en el modulo', () => {
     assert.doesNotMatch(codigo, /fromPartition\s*\(/);
   });
 
-  // Este test existe por un bug real: la llamada se comio en main.js sin el
+  // Este test existe por un bug real: la llamada se comio en bootstrap.js sin el
   // prefijo Headers. node --check lo acepta (es una referencia libre, no un
   // error de sintaxis) y los tests de arriba pasaban igual, porque solo
-  // comprueban que el MODULO tenga los interceptores, no que main.js lo llame.
+  // comprueban que el MODULO tenga los interceptores, no que bootstrap.js lo llame.
   // Solo el boot-smoke lo veia, y antes daba verde: el ReferenceError salia
   // despues de crear la ventana. Por eso el smoke ahora lee el log.
-  test('main.js lo llama cualificado', () => {
+  test('bootstrap.js lo llama cualificado', () => {
     assert.match(MAIN, /Headers\.installHeaderInterceptors\(sess, \{/);
     assert.doesNotMatch(MAIN, /[^.\w]installHeaderInterceptors\(/);
   });
@@ -84,7 +84,7 @@ describe('net/headers.js — deps: los helpers de streams llegan inyectados', ()
   // El delete del Map es parte del CONSUMO: separar lookup y borrado permitiria
   // que un segundo request del mismo token reutilizara el referer. La
   // implementacion vive ahora en src/main/streams/capture.js (paso 20);
-  // main.js solo la inyecta como dep.
+  // bootstrap.js solo la inyecta como dep.
   const CAPTURE = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'main', 'streams', 'capture.js'),
     'utf8'
@@ -100,7 +100,7 @@ describe('net/headers.js — deps: los helpers de streams llegan inyectados', ()
     assert.doesNotMatch(codigo, /findStreamEntryReferer\b/);
   });
 
-  test('main.js pasa los 3 deps en la llamada', () => {
+  test('bootstrap.js pasa los 3 deps en la llamada', () => {
     const m = MAIN.match(/installHeaderInterceptors\(sess, \{([\s\S]*?)\}\);/);
     assert.ok(m, 'no encuentro la llamada con deps');
     for (const d of ['isStreamHlsCaptureEnabled', 'consumeStreamEntryReferer', 'findHlsPlayerEntry']) {
@@ -142,16 +142,16 @@ describe('net/headers.js — onHeadersReceived no bloquea si algo falla', () => 
   });
 });
 
-describe('net/headers.js — nada quedo colgando en main.js', () => {
+describe('net/headers.js — nada quedo colgando en bootstrap.js', () => {
   test('los simbolos que el modulo ahora importa no se usan sueltos', () => {
     for (const s of ['isTrustedResource', 'resolveCookieAction', 'addCookiesBlocked',
       'getAllowlistPolicyForHost', 'PERCHANCE_UA', 'isAuthRedirectFlow', 'isAuthDomain',
       'cookieRemovalUrl', 'getMainWin']) {
       const rx = new RegExp(`(?<![.\\w])${s}\\b`);
       if (rx.test(MAIN) && !new RegExp(`const .*\\b${s}\\b`).test(MAIN)) {
-        // Solo es legitimo si main.js lo declara o lo reexporta; en ningun caso
+        // Solo es legitimo si bootstrap.js lo declara o lo reexporta; en ningun caso
         // debe seguir usandolo sin calificar por una extraccion a medias.
-        throw new Error(`${s} se usa sin calificar en main.js`);
+        throw new Error(`${s} se usa sin calificar en bootstrap.js`);
       }
     }
   });

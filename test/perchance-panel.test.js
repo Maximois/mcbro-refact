@@ -6,13 +6,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const PANEL = leer('src', 'main', 'perchance', 'panel.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('perchance/panel.js -- la extraccion', () => {
-  test('main.js ejecuta la setup desde el modulo nuevo', () => {
-    assert.match(MAIN, /const PerchancePaneInit = require\('\.\/src\/main\/perchance\/panel'\);/);
+  test('bootstrap.js ejecuta la setup desde el modulo nuevo', () => {
+    assert.match(MAIN, /const PerchancePaneInit = require\('\.\/perchance\/panel'\);/);
     assert.match(MAIN, /PerchancePaneInit\.setupPerchancePanel\(\);/);
     assert.doesNotMatch(MAIN, /function setupPerchancePanel\(\)/);
     assert.doesNotMatch(MAIN, /const perchanceDiagInstalled = new WeakSet/);

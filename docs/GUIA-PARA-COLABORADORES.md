@@ -27,7 +27,7 @@ MC Browser es un navegador de escritorio basado en Electron que combina navegaci
 - Las herramientas multimedia detectan recursos y streams y admiten descargas directas/HLS, con FFmpeg y yt-dlp en los flujos que los requieren. Reutilizar el panel de descargas existente; no crear una segunda cola sin una necesidad concreta.
 - El asistente IA admite proveedores locales y remotos, contexto de pagina, herramientas y modos. Los modos actuales del renderer son `casual`, `coder`, `gamedev`, `private` y `supervised`. La memoria y los recordatorios locales persisten en archivos de la aplicacion.
 - Hay superficies especializadas: extractor de WhatsApp, panel WebChat para proveedores web y panel de Perchance. Tienen requisitos de sesion distintos del navegador principal.
-- La modularizacion es parcial: existen modulos y librerias, pero `main.js` y `src/renderer.html` aun concentran bastante logica y coordinacion.
+- La modularizacion es parcial: existen modulos y librerias, pero `src/main/bootstrap.js` (heredero del cuerpo de `main.js`) y `src/renderer.html` aun concentran bastante logica y coordinacion.
 
 ### Privacidad: distinciones importantes
 
@@ -39,7 +39,8 @@ MC Browser es un navegador de escritorio basado en Electron que combina navegaci
 
 | Superficie | Responsabilidad principal |
 | --- | --- |
-| `main.js` | Ciclo de vida Electron, ventana, sesiones, politicas de red/navegacion, permisos, descargas, IPC e integracion de modulos. Es grande; localizar el handler propietario antes de editar. |
+| `main.js` | Entrypoint delgado; solo carga `src/main/bootstrap.js`. |
+| `src/main/bootstrap.js` | Cuerpo del proceso principal (heredero de lo que fue `main.js`): ciclo de vida Electron, ventana, sesiones, politicas de red/navegacion, permisos, descargas, IPC e integracion de modulos. Es grande; localizar el handler propietario antes de editar. |
 | `preload.js` | Frontera entre renderer y proceso principal. Expone `mc` con `contextBridge`; los mensajes entrantes tienen canales permitidos. Mantener API estrecha y validar argumentos en el proceso principal. |
 | `src/renderer.html` | UI anfitriona, pestañas/webviews, estado y logica de muchos paneles. Es un archivo grande y sensible a cambios de orden, reinyeccion y listeners duplicados. |
 | `lib/` | Logica reutilizable con menor acoplamiento a Electron, como permisos, guardia de navegacion y checkpoints HLS. Preferir tests unitarios aqui cuando la regla pueda aislarse. |

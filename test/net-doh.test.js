@@ -59,7 +59,7 @@ describe('net/doh.js — applyDoH', () => {
   test('se exporta y se llama desde los dos sitios de siempre', () => {
     assert.match(FUENTE, /module\.exports\s*=\s*\{[^}]*applyDoH[^}]*\}/s);
 
-    const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+    const main = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
     const loader = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'modules-loader.js'), 'utf8');
     const llamadas = [...(main + '\n' + loader).matchAll(/(?<![.\w])DoH\.applyDoH\(/g)];
     assert.equal(llamadas.length, 2, 'una al guardar cfg, otra al arrancar');
@@ -68,9 +68,9 @@ describe('net/doh.js — applyDoH', () => {
   });
 
   test('configureHostResolver es global: los tres que lo llaman compiten', () => {
-    const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+    const main = fs.readFileSync(path.join(__dirname, '..', 'src/main/bootstrap.js'), 'utf8');
     const enMain = (main.match(/app\.configureHostResolver\s*\(\s*\{/g) || []).length;
-    assert.ok(enMain >= 1, 'quedan llamadas en main.js (Perchance)');
+    assert.ok(enMain >= 1, 'quedan llamadas en bootstrap.js (Perchance)');
     // Dos en applyDoH: la rama que configura el proveedor y la que lo apaga.
     // La cabecera tambien nombra la funcion, asi que se cuenta solo la llamada.
     assert.equal(

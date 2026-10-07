@@ -6,14 +6,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const CREATE = leer('src', 'main', 'windows', 'create.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('windows/create.js -- la extraccion', () => {
-  test('main.js ya no define createWindow, lo registra dos veces', () => {
+  test('bootstrap.js ya no define createWindow, lo registra dos veces', () => {
     assert.doesNotMatch(MAIN, /function createWindow\(\)/);
-    assert.match(MAIN, /const WindowsCreate = require\('\.\/src\/main\/windows\/create'\);/);
+    assert.match(MAIN, /const WindowsCreate = require\('\.\/windows\/create'\);/);
     assert.equal((MAIN.match(/WindowsCreate\.createWindow\(\);/g) || []).length, 2,
       'una inicial y una de recrear tras cerrar');
   });

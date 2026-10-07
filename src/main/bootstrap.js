@@ -2,15 +2,39 @@
 
 // MC Browser -- src/main/bootstrap.js
 //
-// Cuerpo principal del proceso principal. Cuando la extracción lo puso en
-// bootstrap.js, main.js quedó como entrypoint delgado: consts de datos,
-// config y runtime, y la primera llamada al resto de la aplicación.
+// Cuerpo principal del proceso principal. main.js (entrypoint delgado) es el
+// unico que carga este archivo, y lo hace como SU PRIMER require de proyecto.
+// Aqui, lo primero que se hace con codigo propio es fijar la carpeta de datos
+// (regla 2.5): config, runtime, data/* y el resto se cargan DESPUES de ese
+// setPath. Ver docs/RESTRUCTURACION.md 2.5 y 3.
 
 const { app, BrowserWindow, session, ipcMain, shell, dialog, Notification, Menu, clipboard, webContents } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, execFile, execFileSync } = require('child_process');
 const crypto = require('crypto');
+
+// ── Carpeta de datos: tiene que ir ANTES de cualquier require de código propio ──
+//
+// Unique data folder per build: dev and installed app keep separate data.
+//
+// Por qué está aquí y no más abajo: config, data/bookmarks y data/history
+// calculan su ruta AL CARGARSE, con `path.join(app.getPath('userData'), ...)`.
+// Se requieren en las líneas siguientes a este bloque, así que leerían
+// `userData` antes de que nadie lo cambiara y acabarían en la carpeta POR
+// DEFECTO en vez de en `mc-browser-v2-dev`.
+//
+// No es hipotético: se perdían las sesiones guardadas, el allowlist, el DoH, el
+// historial real y los marcadores, porque esos archivos existen en la carpeta
+// correcta y la app miraba la otra.
+//
+// Invariante (regla 2.5): ESTE es el primer require de código propio del
+// proceso principal. Si alguien antepone un require de proyecto antes de este
+// bloque, la app vuelve a leer la carpeta por defecto. Lo comprueban el fuente
+// (test/data-paths.test.js, que escanea ESTE archivo) y la ejecución
+// (tools/boot-smoke.js, con la línea [DATA] de más abajo).
+const DATA_DIR = app.isPackaged ? 'MC Browser' : 'mc-browser-v2-dev';
+app.setPath('userData', path.join(app.getPath('appData'), DATA_DIR));
 const { isAggressiveAdNavigation, isExplicitlyBlocked, isTrustedResource, isVideoHost, isAdblockHostAllowed, isAdblockSiteAllowed, isGoogleDocumentHost, isGoogleAdHost } = require('../../modules/adblocker/main');
 const Permissions = require('../../lib/permissions');
 const { isWebContentsFrameAlive } = Permissions;
@@ -60,6 +84,10 @@ const NavTransitions = require('./navigation/transitions');
 // accesores, nunca importando STATS. Ver src/main/stats/tracker.js.
 const StatsTracker = require('./stats/tracker');
 const MediaDetect = require('./stats/media-detect');
+// Registra el handler 'get-sysinfo'. No devuelve nada: el require es lo que
+// instala el IPC. Antes este modulo tambien era el muestreador de CPU/RAM y lo
+// exportaba; ese sampler ya no existe.
+require('./stats/process-metrics');
 // DNS sobre HTTPS. Ojo: hay DOS mapas de servidores distintos (wire /dns-query
 // para Chromium y JSON /resolve para el test), y configureHostResolver es un
 // ajuste GLOBAL que compite con el resolver nativo de Perchance.
@@ -613,13 +641,13 @@ const STREAM_SCAN_SCRIPT = `
       const SKIP_EXT = /\\.(html?|php|aspx?|jsp|json|xml|css|js|svg|woff2?|ttf|eot)(\\?|#|$)/i;
       const MEDIA_RE = /\\.(m3u8|mp4|webm|mpd|ts|m4s|mkv|avi|mov)(\\?|#|$)/i;
       const TOKEN_RE = /[?&](token|exp|sign|auth|st|nonce|signature|hls|m3u8|mpd|playlist)=/i;
-      const isMedia = u => u && !SKIP_EXT.test(u) && !/^(about|data|javascript):/i.test(u) && (MEDIA_RE.test(u) || TOKEN_RE.test(u) || /^https?:\/\/(x\.com|twitter\.com)\/[^/]+\/status\/\d+\/video\//i.test(u));
+      const isMedia = u => u && !SKIP_EXT.test(u) && !/^(about|data|javascript):/i.test(u) && (MEDIA_RE.test(u) || TOKEN_RE.test(u) || /^https?:\\/\\/(x\\.com|twitter\\.com)\\/[^/]+\\/status\\/\\d+\\/video\\//i.test(u));
       // Extraer usuario de un bloque de tweet (x.com): a[href="/username"] o [data-testid="User-Name"]
       function extractUserFromNode(node) {
         const links = node.querySelectorAll('a[href]');
         for (const a of links) {
           const href = a.getAttribute('href');
-          const m = href.match(/^\/([a-zA-Z0-9_]{1,15})$/);
+          const m = href.match(/^\\/([a-zA-Z0-9_]{1,15})$/);
           if (m && !/^(home|explore|search|notifications|messages|settings|i|compose|login|signup|hashtag|status|photo)$/i.test(m[1])) {
             return '@' + m[1];
           }

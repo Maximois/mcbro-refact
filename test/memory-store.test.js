@@ -9,13 +9,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');
-const MAIN = leer('main.js');
+const MAIN = leer('src/main/bootstrap.js');
 const STORE = leer('src', 'main', 'memory', 'store.js');
 const codigo = (s) => s.slice(s.indexOf('*/') + 2);
 
 describe('memory/store.js -- la extraccion', () => {
-  test('main.js solo lo carga y lo registra', () => {
-    assert.match(MAIN, /const MemoryStore = require\('\.\/src\/main\/memory\/store'\);/);
+  test('bootstrap.js solo lo carga y lo registra', () => {
+    assert.match(MAIN, /const MemoryStore = require\('\.\/memory\/store'\);/);
     assert.match(MAIN, /MemoryStore\.registerMemoryIpc\(\);/);
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('memory:/);
     assert.doesNotMatch(MAIN, /ipcMain\.handle\('reminders:/);
@@ -26,10 +26,10 @@ describe('memory/store.js -- la extraccion', () => {
     }
   });
 
-  test('las rutas salen de userData, dentro de main.js (setPath antes del require)', () => {
+  test('las rutas salen de userData, dentro de bootstrap.js (setPath antes del require)', () => {
     // Tiene que estar despues de app.setPath('userData', ...), que esta en la
     // linea 28; si no, las notas de esta maquina irían al perfil equivocado.
-    const requireId = MAIN.indexOf("require('./src/main/memory/store')");
+    const requireId = MAIN.indexOf("require('./memory/store')");
     const setPathId = MAIN.indexOf("app.setPath('userData'");
     assert.ok(requireId > setPathId, 'require de store.js ANTES que setPath');
     assert.match(STORE, /const MEMORY_DIR = path\.join\(app\.getPath\('userData'\), 'memory'\);/);

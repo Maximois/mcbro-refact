@@ -129,12 +129,13 @@ dice que va a cambiar nombres de archivo.
 | `require('./lib/hls-resume')` en `main.js` | se va con su único consumidor |
 
 `finalizeMediaFile` llega **por parámetro**, no importado. Importarla sería
-circular (main.js requiere `hls.js`, y `hls.js` requeriría main.js). Es la
+circular (bootstrap.js requiere `hls.js`, y `hls.js` requeriría bootstrap.js). Es la
 inyección temporal del criterio 5.14 del plan, y la resuelve el paso 18.
 `downloads/file.js` hará lo mismo en el 17.
 
-`FFMPEG_DIR` se quedó en `main.js` a propósito: está justo debajo de los helpers
-de HLS y era el candidato obvio para sair por error. Hay un test que lo fija.
+`FFMPEG_DIR` se quedó en el cuerpo del proceso (`bootstrap.js`) a propósito: está
+justo debajo de los helpers de HLS y era el candidato obvio para sair por error.
+Hay un test que lo fija.
 
 ## Las trampas de HLS, que fallan sin error
 
