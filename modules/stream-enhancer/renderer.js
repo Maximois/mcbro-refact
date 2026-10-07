@@ -41,7 +41,7 @@ const StreamEnhancer = {
       if (!dlBtn || el.querySelector('.btn.ai-btn')) return;
       const aiBtn = document.createElement('button');
       aiBtn.className = 'btn ghost btn-sm ai-btn';
-      aiBtn.textContent = '✦ IA';
+      aiBtn.textContent = 'MC-AI';
       aiBtn.title = 'Preguntar a IA cómo descargar';
       aiBtn.onclick = () => {
         const mediaType = el.querySelector('.media-type-lbl')?.textContent || 'Media';
@@ -58,7 +58,7 @@ const StreamEnhancer = {
       if (!dlBtn || el.querySelector('.ai-btn')) return;
       const aiBtn = document.createElement('button');
       aiBtn.className = 'btn ghost btn-sm ai-btn';
-      aiBtn.textContent = '✦ IA';
+      aiBtn.textContent = 'MC-AI';
       aiBtn.title = 'Analizar con IA';
       aiBtn.onclick = () => {
         const urlEl = el.querySelector('.media-url-lbl');

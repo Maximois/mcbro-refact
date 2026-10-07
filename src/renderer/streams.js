@@ -420,7 +420,7 @@ function renderSidebarStreamItemHtml(item) {
     '<span class="resource-details">' + badges + fragBadge + timeBadge + '</span></span>' +
     '<span class="stream-actions"><button class="btn ghost btn-sm" onclick="openStreamResource(\'' + safeUrl + '\',\'' + (item.type||'') + '\',\'' + (item.pageUrl||'').replace(/'/g,"\\'") + '\')" title="Abrir recurso">Abrir</button>' +
     '<button class="btn warn btn-sm" onclick="dlMedia(\'' + safeUrl + '\',\'' + (item.type||'MP4') + '\',\'' + (item.pageUrl||'').replace(/'/g,"\\'") + '\',\'' + dlName + '\')" title="Descargar">DL</button>' +
-    '<button class="btn ghost btn-sm" onclick="askStreamToAI(\'' + safeUrl + '\',\'' + (item.type||'Stream') + '\')" title="Analizar con IA">✦</button></span>' +
+    '<button class="btn ghost btn-sm" onclick="askStreamToAI(\'' + safeUrl + '\',\'' + (item.type||'Stream') + '\')" title="Analizar con IA">MC-AI</button></span>' +
   '</div>';
 }
 
