@@ -12,7 +12,7 @@ const leer = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')
 const MAIN = leer('main.js');
 const YTDLP = leer('tools', 'ytdlp.js');
 const FFMPEG = leer('src', 'main', 'downloads', 'ffmpeg.js');
-const codigo = (s) => s.slice(s.indexOf('*/') + 2);
+const codigo = (s) => s.slice(s.indexOf('*/') + 2).replace(/\r\n/g, '\n');
 
 // El punto de este archivo es que los canales de preload.js y renderer.html NO
 // pueden cambiar de nombre. Si se renombrara uno, el boton de instalar yt-dlp
