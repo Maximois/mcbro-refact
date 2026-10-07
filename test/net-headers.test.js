@@ -142,6 +142,28 @@ describe('net/headers.js — onHeadersReceived no bloquea si algo falla', () => 
   });
 });
 
+describe('net/headers.js — los contenedores de video embebidos no se niegan con X-Frame-Options', () => {
+  // luluvdo.com (y otros contenedores) se cargan en iframes y mandan
+  // X-Frame-Options: deny; Chromium se niega a pintar el marco. El strip de
+  // x-frame-options y de frame-ancestors solo aplica a iframes (subFrame/object)
+  // cuyo host esta en la allowlist de VIDEO_HOSTS, no a toda la navegacion.
+  test('importa isVideoHost y lo usa con el host en subFrame', () => {
+    assert.match(MOD, /isTrustedResource, isVideoHost } = require\('\.\.\/\.\.\/\.\.\/modules\/adblocker\/main'\)/);
+    const i = MOD.indexOf('x-frame-options');
+    const j = MOD.indexOf('isVideoHost(host)');
+    assert.ok(i > -1 && j > -1, 'no encuentro el strip de XFO ni isVideoHost');
+    const seg = MOD.slice(Math.max(0, i - 500), i + 900);
+    assert.match(seg, /isSubFrame && isVideoHost\(host\)/);
+    assert.match(seg, /subframe/);
+  });
+
+  test('el strip de XFO es condicional a iframe y host de video', () => {
+    assert.match(codigo, /if \(isSubFrame && isVideoHost\(host\)\) \{/);
+    assert.match(codigo, /x-frame-options/);
+    assert.match(codigo, /frame-ancestors/);
+  });
+});
+
 describe('net/headers.js — nada quedo colgando en bootstrap.js', () => {
   test('los simbolos que el modulo ahora importa no se usan sueltos', () => {
     for (const s of ['isTrustedResource', 'resolveCookieAction', 'addCookiesBlocked',

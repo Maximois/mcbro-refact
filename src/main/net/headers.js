@@ -67,7 +67,7 @@ const { isAuthDomain, isAuthRedirectFlow, isPerchanceHost, PERCHANCE_UA } = requ
 const { getAllowlistPolicyForHost } = require('../permissions/adapters');
 const { addCookiesBlocked } = require('../stats/tracker');
 const { resolveCookieAction } = require('../../../lib/permissions');
-const { isTrustedResource } = require('../../../modules/adblocker/main');
+const { isTrustedResource, isVideoHost } = require('../../../modules/adblocker/main');
 const { cookieRemovalUrl } = require('./cookie-guard');
 
 /**
@@ -174,6 +174,18 @@ function installHeaderInterceptors(sess, deps) {
             if (key.toLowerCase() === 'access-control-allow-origin') delete responseHeaders[key];
           }
           responseHeaders['Access-Control-Allow-Origin'] = ['*'];
+        }
+        const isSubFrame = d.resourceType === 'subFrame' || d.resourceType === 'subframe' || d.resourceType === 'object';
+        if (isSubFrame && isVideoHost(host)) {
+          for (const key of Object.keys(responseHeaders)) {
+            if (/^x-frame-options$/i.test(key)) delete responseHeaders[key];
+          }
+          for (const key of Object.keys(responseHeaders)) {
+            if (!/^content-security-policy$/i.test(key)) continue;
+            const values = (Array.isArray(responseHeaders[key]) ? responseHeaders[key] : [responseHeaders[key]])
+              .map(v => String(v).replace(/;\s*frame-ancestors[^;]*/gi, '').trim());
+            responseHeaders[key] = values;
+          }
         }
         // La partición dedicada de Perchance ya se prepara sin restricciones;
         // no se debe reintroducir una exception global por dominio aquí.
