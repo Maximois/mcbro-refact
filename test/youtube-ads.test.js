@@ -288,15 +288,25 @@ describe('YT_AD_SCRIPT: recorta la metadata de anuncios del player', () => {
     assert.equal(pausados, 2, 'ocultar no corta el audio: hay que pausar el media');
   });
 
-  test('get_watch no se re-serializa pero su body sigue pidiendo sin inline ads', async () => {
+  test('get_watch se poda igual que player (el pre-roll del SPA navega por ahi)', async () => {
     const fake = fakeFetch();
     const ctx = crearContexto({ fetch: fake.fn });
     const res = await ctx.fetch('https://www.youtube.com/youtubei/v1/get_watch', {
       method: 'POST',
       body: JSON.stringify({ videoId: 'x' })
     });
-    assert.equal(res, fake.ultima, 'la respuesta de get_watch pasa intacta (evita re-serializar en cada navegacion)');
+    const datos = JSON.parse(res.body);
+    assert.equal(datos.adPlacements, undefined, 'get_watch tambien debe podarse');
     assert.ok(String(fake.req.init.body).includes('isInlinePlaybackNoAd'));
+  });
+
+  test('si la respuesta no traia anuncios, no se reconstruye ni re-serializa', async () => {
+    const fake = { ultima: respuestaJson({ videoDetails: { title: 'limpio' } }, 'https://www.youtube.com/youtubei/v1/player'), req: null };
+    fake.fn = (url, init) => { fake.req = { url, init }; return Promise.resolve(fake.ultima); };
+    const ctx = crearContexto({ fetch: fake.fn });
+    const res = await ctx.fetch('https://www.youtube.com/youtubei/v1/player', { method: 'POST', body: '{}' });
+    assert.equal(res, fake.ultima, 'sin campos de anuncio la respuesta original debe pasar intacta');
+    assert.equal(ctx.__mcYtAdsLog[0].pruned, false, 'el log debe dejar constancia de que no habia nada que podar');
   });
 
   test('el fetch de /player anota en __mcYtAdsLog que la respuesta era JSON', async () => {

@@ -56,13 +56,6 @@ const YT_AD_SCRIPT = `(() => {
     return false;
   }
 
-  // La poda fuerte (parsear + re-serializar) solo corre sobre el endpoint de
-  // player; get_watch/playlist reciben isInlinePlaybackNoAd en el body pero su
-  // respuesta pasa intacta para no pagar el re-serializado en cada navegacion.
-  function esEndpointPlayer(url) {
-    return String(url || '').indexOf('youtubei/v1/player') !== -1;
-  }
-
   function trapKey(obj, key) {
     try {
       Object.defineProperty(obj, key, {
@@ -91,10 +84,14 @@ const YT_AD_SCRIPT = `(() => {
   }
 
   function prune(value) {
-    if (!value || typeof value !== 'object') return value;
+    // Devuelve true si borro algun campo de anuncio: el que llama puede
+    // evitar el re-serializado (JSON.stringify + new Response) cuando no
+    // habia nada que podar, que es el caso de casi todas las navegaciones.
+    let cambiado = false;
+    if (!value || typeof value !== 'object') return cambiado;
     if (Array.isArray(value)) {
-      for (let i = 0; i < value.length; i++) prune(value[i]);
-      return value;
+      for (let i = 0; i < value.length; i++) { if (prune(value[i])) cambiado = true; }
+      return cambiado;
     }
     const keys = Object.keys(value);
     for (let i = 0; i < keys.length; i++) {
@@ -102,11 +99,10 @@ const YT_AD_SCRIPT = `(() => {
       if (AD_KEYS.indexOf(key) !== -1) {
         try { delete value[key]; } catch (e) {}
         trapKey(value, key);
-      } else {
-        prune(value[key]);
-      }
+        cambiado = true;
+      } else { if (prune(value[key])) cambiado = true; }
     }
-    return value;
+    return cambiado;
   }
 
   function patchBody(body) {
@@ -165,7 +161,6 @@ const YT_AD_SCRIPT = `(() => {
           try {
             const finalUrl = url || (res && res.url) || '';
             if (!isPlayerUrl(finalUrl)) return res;
-            if (!esEndpointPlayer(finalUrl)) return res;
             const type = res && res.headers ? (res.headers.get('content-type') || '') : '';
             if (!res || !res.ok) {
               recordar({ url: finalUrl, contentType: type || '(sin header)', json: false, status: res && res.status });
@@ -177,8 +172,9 @@ const YT_AD_SCRIPT = `(() => {
               return res;
             }
             return res.clone().json().then(function (data) {
-              prune(data);
-              recordar({ url: finalUrl, contentType: type, json: true });
+              const cambiado = prune(data);
+              recordar({ url: finalUrl, contentType: type, json: true, pruned: cambiado });
+              if (!cambiado) return res;
               return new Response(JSON.stringify(data), {
                 status: res.status, statusText: res.statusText, headers: res.headers
               });
@@ -216,8 +212,8 @@ const YT_AD_SCRIPT = `(() => {
             try { contentType = (this.getResponseHeader && this.getResponseHeader('content-type')) || ''; } catch (e) {}
             const type = this.responseType;
             if (type === 'json') {
-              prune(this.response);
-              recordar({ url: dest, contentType: contentType || 'json', json: true });
+              const cambiadoJson = prune(this.response);
+              recordar({ url: dest, contentType: contentType || 'json', json: true, pruned: cambiadoJson });
               return;
             }
             if (type) {
@@ -234,11 +230,13 @@ const YT_AD_SCRIPT = `(() => {
               recordar({ url: dest, contentType: contentType || 'text', json: false, error: String(err) });
               return;
             }
-            prune(data);
-            const hacked = JSON.stringify(data);
-            Object.defineProperty(this, 'responseText', { configurable: true, get: function () { return hacked; } });
-            Object.defineProperty(this, 'response', { configurable: true, get: function () { return hacked; } });
-            recordar({ url: dest, contentType: contentType || 'text', json: true });
+            const cambiado = prune(data);
+            if (cambiado) {
+              const hacked = JSON.stringify(data);
+              Object.defineProperty(this, 'responseText', { configurable: true, get: function () { return hacked; } });
+              Object.defineProperty(this, 'response', { configurable: true, get: function () { return hacked; } });
+            }
+            recordar({ url: dest, contentType: contentType || 'text', json: true, pruned: cambiado });
           } catch (e) {}
         });
       }
@@ -281,7 +279,7 @@ const YT_AD_SCRIPT = `(() => {
       } catch (e) {}
     }
 
-    setInterval(function () {
+    function limpiar() {
       try {
         const feed = document.querySelectorAll(FEED_ADS);
         for (let i = 0; i < feed.length; i++) ocultarAd(envolventeAd(feed[i]) || feed[i]);
@@ -293,7 +291,10 @@ const YT_AD_SCRIPT = `(() => {
         const banner = document.querySelector('.ytp-ad-overlay-ad-container');
         if (banner) banner.style.display = 'none';
       } catch (e) {}
-    }, 400);
+    }
+
+    setInterval(limpiar, 150);
+    window.addEventListener('yt-navigate-finish', limpiar);
   } catch (e) {}
 })();`;
 
