@@ -5,6 +5,7 @@ node_modules/
 dist/
 out/
 *.blockmap
+build-info.json
 
 # Logs
 *.log

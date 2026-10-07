@@ -65,6 +65,14 @@ const git = estadoGit();
 // no ayuda a distinguir builds, y el sello de fecha es lo unico que importa
 // para saber cual se instalo.
 const artifactName = 'MC Browser Setup-' + stamp + '.exe';
+const buildInfo = {
+  version: pkg.version,
+  stamp: stamp,
+  commit: git.commit,
+  clean: git.sucio === false,
+  builtAt: new Date().toISOString(),
+  artifactName: artifactName
+};
 
 console.log('=== build de MC Browser ===');
 console.log('  version (package.json) : ' + pkg.version);
@@ -78,27 +86,43 @@ if (git.sucio === true) {
 }
 console.log('  nombre                 : ' + artifactName);
 
+function writeBuildInfo() {
+  // El instalador llevara una copia: src/main/stats/process-metrics.js la lee
+  // en runtime y el panel "Acerca de" muestra el sello + commit, para saber
+  // desde la app que instalador se tiene instalado. Se borra al terminar:
+  // es un artefacto de build, nunca un archivo versionado.
+  fs.writeFileSync(path.join(RAIZ, 'build-info.json'), JSON.stringify(buildInfo, null, 2) + '\n', 'utf8');
+}
+
 if (soloRaw) {
   console.log('\n  (modo --raw: nombre por defecto de package.json)');
   process.exit(0);
 }
 
-const args = ['--win', '--config.artifactName=' + artifactName];
-console.log('\n  ejecutando electron-builder');
-console.log('  (puede tardar 1-3 minutos)\n');
+writeBuildInfo();
+let failure = null;
+try {
+  const args = ['--win', '--config.artifactName=' + artifactName];
+  console.log('\n  ejecutando electron-builder');
+  console.log('  (puede tardar 1-3 minutos)\n');
 
-// Se invoca con `node` y sin shell a proposito: el nombre tiene espacios y con
-// shell:true en Windows cmd parte el argumento en varios y electron-builder
-// responde "Unknown arguments: Browser, Setup-...exe".
-const cli = require.resolve('electron-builder/out/cli/cli.js');
-const r = spawnSync(process.execPath, [cli].concat(args), {
-  cwd: RAIZ,
-  stdio: 'inherit'
-});
+  // Se invoca con `node` y sin shell a proposito: el nombre tiene espacios y con
+  // shell:true en Windows cmd parte el argumento en varios y electron-builder
+  // responde "Unknown arguments: Browser, Setup-...exe".
+  const cli = require.resolve('electron-builder/out/cli/cli.js');
+  const r = spawnSync(process.execPath, [cli].concat(args), {
+    cwd: RAIZ,
+    stdio: 'inherit'
+  });
 
-if (r.status !== 0) {
-  console.error('\n  FALLO: electron-builder salio con codigo ' + r.status);
-  process.exit(r.status || 1);
+  if (r.status !== 0) failure = r.status || 1;
+} finally {
+  try { fs.unlinkSync(path.join(RAIZ, 'build-info.json')); } catch {}
+}
+
+if (failure) {
+  console.error('\n  FALLO: electron-builder salio con codigo ' + failure);
+  process.exit(failure);
 }
 
 console.log('\n=== instalador generado ===');

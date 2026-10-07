@@ -3,8 +3,10 @@
  * MC Browser -- src/main/stats/process-metrics.js
  *
  * Ahora solo registra el handler 'get-sysinfo' (datos del sistema: SO, CPU,
- * memoria, versiones y carpeta de descargas). Lo consume el renderer en la
- * seccion de informacion del sistema de Ajustes, via preload.getSysinfo().
+ * memoria, versiones y carpeta de descargas) mas el bloque `build`: sello,
+ * commit y nombre del instalador que corresponde a esta app. Lo consume el
+ * renderer en la seccion de informacion del sistema de Ajustes, via
+ * preload.getSysinfo().
  *
  * -----------------------------------------------------------------------------
  * QUE SE QUITO DE AQUI Y POR QUE
@@ -38,13 +40,44 @@
  */
 
 const os = require('os');
+const fs = require('fs');
+const path = require('path');
 const { app, ipcMain } = require('electron');
 const { CFG } = require('../config');
 
-ipcMain.handle('get-sysinfo', () => ({
-  hostname: os.hostname(), platform: os.platform(), arch: os.arch(),
-  cpus: os.cpus().length, totalMemory: os.totalmem(), freeMemory: os.freemem(),
-  uptime: os.uptime(), nodeVersion: process.version, electronVersion: process.versions.electron,
-  chromeVersion: process.versions.chrome,
-  dlDir: CFG.downloadDir || app.getPath('downloads')
-}));
+// Sello de build embebido por tools/build-installer.js al empaquetar. No existe
+// en dev ni si se empaqueto con electron-builder directo: en esos casos la app
+// responde `build: null` y el renderer muestra "sin sello".
+function readBuildInfo() {
+  try {
+    const file = path.join(app.getAppPath(), 'build-info.json');
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('get-sysinfo', () => {
+  const buildInfo = readBuildInfo();
+  return {
+    hostname: os.hostname(), platform: os.platform(), arch: os.arch(),
+    cpus: os.cpus().length, totalMemory: os.totalmem(), freeMemory: os.freemem(),
+    uptime: os.uptime(), nodeVersion: process.version, electronVersion: process.versions.electron,
+    chromeVersion: process.versions.chrome,
+    // Alias con los nombres que el renderer ya consume en "Acerca de":
+    // ab-electron, ab-chrome, ab-node, ab-mem, ab-datadir.
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.version,
+    mem: (os.totalmem() / 1073741824).toFixed(2) + ' GB',
+    dataDir: app.getPath('userData'),
+    dlDir: CFG.downloadDir || app.getPath('downloads'),
+    build: buildInfo ? {
+      label: buildInfo.artifactName || '',
+      stamp: buildInfo.stamp || '',
+      commit: buildInfo.commit || '',
+      clean: buildInfo.clean === true,
+      packageVersion: buildInfo.version || ''
+    } : null
+  };
+});
