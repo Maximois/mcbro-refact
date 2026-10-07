@@ -17,7 +17,7 @@ const {
   sanitizeAiConfigForPublic
 } = require('../lib/permissions');
 const { isSameNavigationSite, siteRootIdentity } = require('../lib/navigation-guard');
-const { createBlockHandler, isAggressiveAdNavigation, isGoogleDocumentHost, isGoogleAdHost, isAdblockHostAllowed, isAdblockSiteAllowed, builtInCosmeticSelectors } = require('../modules/adblocker/main');
+const { createBlockHandler, isAggressiveAdNavigation, isGoogleDocumentHost, isGoogleAdHost, isAdblockHostAllowed, isAdblockSiteAllowed, builtInCosmeticSelectors, isVideoHost } = require('../modules/adblocker/main');
 
 describe('adblock host allowlist', () => {
   test('permite el dominio guardado y sus subdominios', () => {
@@ -305,6 +305,54 @@ describe('parseGlobalBlockRule / isGlobalBlockMatch', () => {
   test('valor vacío no genera regla', () => {
     assert.equal(parseGlobalBlockRule(''), null);
     assert.equal(parseGlobalBlockRule('   '), null);
+  });
+});
+
+describe('VAST: tags de anuncio sí, librerías de reproductor no', () => {
+  test('vast.js y vast-client.js no son anuncios (regresión: player jw8/hgplaycdn)', () => {
+    assert.equal(isAggressiveAdNavigation('https://hgplaycdn.com/player/jw8/vast.js?v=32', { sameSite: false }), false);
+    assert.equal(isAggressiveAdNavigation('https://cdn.example.com/vast-client.js', { sameSite: false }), false);
+    assert.equal(isAggressiveAdNavigation('https://site.com/player/vast.js', { sameSite: true }), false);
+  });
+
+  test('los endpoints de tag VAST/VMAP siguen bloqueando, también same-site', () => {
+    assert.equal(isAggressiveAdNavigation('https://site.com/vast', { sameSite: true }), true);
+    assert.equal(isAggressiveAdNavigation('https://site.com/adserver/vast.xml', { sameSite: true }), true);
+    assert.equal(isAggressiveAdNavigation('https://site.com/vast?ad_type=5', { sameSite: true }), true);
+    assert.equal(isAggressiveAdNavigation('https://adnet.example/vast/3.0', { sameSite: false }), true);
+    assert.equal(isAggressiveAdNavigation('https://site.com/vmap', { sameSite: true }), true);
+  });
+});
+
+describe('contenedores de vídeo legítimos: permitir siempre (requests + navegación)', () => {
+  test('isVideoHost reconoce los contenedores del usuario y sus subdominios', () => {
+    assert.equal(isVideoHost('hgplaycdn.com'), true);
+    assert.equal(isVideoHost('player.niramirus.com'), true);
+    assert.equal(isVideoHost('cdn.playnixes.com'), true);
+    assert.equal(isVideoHost('hglamioz.com'), true);
+    assert.equal(isVideoHost('example.com'), false);
+    assert.equal(isVideoHost('hgplaycdn.com.evil.test'), true); // substring deliberado, igual que el resto de la lista
+  });
+
+  test('una regla del motor de listas no bloquea un contenedor de vídeo', () => {
+    const handler = createBlockHandler(
+      () => ({ match: () => ({ match: true }) }),
+      [],
+      () => true,
+      () => true,
+      null,
+      true,
+      null,
+      null,
+      null
+    );
+    let decision = null;
+    handler({
+      url: 'https://hgplaycdn.com/player/jw8/vast.js?v=32',
+      documentUrl: 'https://www.niramirus.com/ver/episodio',
+      resourceType: 'script'
+    }, result => { decision = result; });
+    assert.deepEqual(decision, { cancel: false });
   });
 });
 

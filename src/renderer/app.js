@@ -182,6 +182,16 @@ function bindWebviewToTab(id, wv) {
       }
     }
     renderCosmeticRules();
+    // Panel de permisos abierto: seguir a la página activa. Antes el dominio
+    // quedaba congelado al de la página en que se abrió el panel; al navegar
+    // por clic en un enlace, atrás/adelante o reload seguía mostrando los
+    // recursos y dominios relacionados de la página anterior.
+    try {
+      const permPanel = document.getElementById('permissions-panel');
+      if (permPanel && !permPanel.classList.contains('collapsed') && typeof refreshPermissionsForActivePage === 'function') {
+        refreshPermissionsForActivePage();
+      }
+    } catch {}
   });
 
   // Navegación interna (SPA, hash, history.pushState)
@@ -781,6 +791,8 @@ ${details}`;
   setText('ab-node',     info.node);
   setText('ab-mem',      info.mem);
   setText('ab-datadir',  info.dataDir);
+  const ab = info.build;
+  setText('ab-build', ab ? (ab.label + (ab.stamp ? ' · ' + ab.stamp : '') + (ab.commit ? ' · commit ' + ab.commit : '') + (!ab.clean ? ' · git sucio' : '')) : 'No empaquetado (dev)');
   $('dl-dir').value = info.dlDir;
 
   // Real values for fingerprinting

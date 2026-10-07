@@ -56,16 +56,22 @@ const AD_NETWORK_HOSTS = [
   'onclickads.net', 'pushnotifications.com'
 ];
 
-// Tokens de ruta que son marcas de redes publicitarias (pagead, VAST,
-// adserver...): no chocan con recursos propios de un sitio legítimo, así que
-// aplican incluso en el mismo sitio (p. ej. youtube.com/pagead/...).
+// Tokens de ruta que son marcas de redes publicitarias (pagead, adserver...):
+// no chocan con recursos propios de un sitio legítimo, así que aplican incluso
+// en el mismo sitio (p. ej. youtube.com/pagead/...).
 const AD_PATH_TOKENS = [
   '/adserver', '/adframe', '/popunder', '/click-redirect',
-  '/popads', '/vast',
+  '/popads',
   'adsbygoogle', 'pagead', 'prebid', 'adservice', 'adsystem',
   'doubleclick', 'googlesyndication', 'googleadservices', 'adtng', 'adnami',
   'adpushup'
 ];
+// Tags VAST/VMAP (las URLs de respuesta de anuncio: /vast, /vast.xml,
+// /vast.php, /vast?..., /vmap...). Las LIBRERÍAS del reproductor (vast.js,
+// vast-client.js) no son anuncios: los contenedores de video (JW Player y
+// similares) las cargan desde su propio CDN, y bloquearlas rompe el video.
+// Por eso aquí se exige que el segmento no termine en `.js`.
+const VAST_TAG_PATH_RE = /\/(?:vast|vmap)(?:$|[\/?#]|\.(?!js(?:$|[?#]))[a-z0-9.]+)/i;
 // Subcadenas genéricas: bloquean ads de terceros, pero en el mismo sitio
 // chocaban con contenido propio del sitio (wartale: /api/get/, ad-cover.jpg).
 const GENERIC_AD_SUBSTRINGS = [
@@ -84,6 +90,9 @@ function isAggressiveAdNavigation(rawUrl, opts = {}) {
     if (AD_NETWORK_HOSTS.some(h => host === h || host.endsWith('.' + h))) return true;
     // Tokens de marca de red: bloquean también en same-site.
     if (AD_PATH_TOKENS.some(t => lower.includes(t))) return true;
+    // Tags VAST/VMAP: aplican también same-site (un sitio sirve sus propios
+    // tags de anuncio), pero jamás las librerías .js de los reproductores.
+    if (VAST_TAG_PATH_RE.test(lower)) return true;
     // Casos exactos de banner/iframe (e.g. a.adtng.com/get/... y spot_id_...)
     if (host.includes('adtng.com') || /spot_id_[0-9]+/i.test(lower) || /google_ads_iframe|aswift_|adsbygoogle|adslot/.test(lower)) {
       return true;
@@ -128,7 +137,10 @@ function isGoogleAdHost(host) {
 const VIDEO_HOSTS = [
   'mega.nz', 'pixeldrain.com', 'filemoon.to', 'filemoon.sx', 'filemoon.in',
   'savefiles', 'playmogo', 'mixdrop', 'miixdrop', 'dood', 'voe', 'mxdrop',
-  'lulu', 'mp4upload', 'streamwish'
+  'lulu', 'mp4upload', 'streamwish',
+  // Contenedores de vídeo del usuario (permitir siempre, también en la navegación
+  // y los redirects). Sus subdominios y anexos matchean por substring en isVideoHost.
+  'hgplaycdn', 'niramirus', 'playnixes', 'hglamioz'
 ];
 
 const TRUSTED_CROSS_ORIGINS = {

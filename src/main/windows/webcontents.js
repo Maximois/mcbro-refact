@@ -45,17 +45,21 @@ function registerWebContentsListeners(deps = {}) {
       const sourceUrl = wc.getURL();
       let targetHostForAdCheck = '';
       try { targetHostForAdCheck = new URL(url).hostname.toLowerCase(); } catch {}
+      const isSameSiteRedirect = !!sourceUrl && NavTransitions.isSameNavigationSite(sourceUrl, url);
 
       // Reglas de prioridad: primero bloqueamos redes publicitarias o redirecciones
       // explÃ­citas a subdominios de anuncios del mismo dominio. Solo despuÃ©s se
       // permite el caso de navegaciÃ³n del mismo sitio y sin indicios publicitarios.
+      // El heurÃ­stico recibe el MISMO `sameSite` que en las requests: un salto
+      // interno (p. ej. wartaletools.com -> wartaletools.com/get/...) matchea
+      // tokens genÃ©ricos de ruta que chocan con contenido propio del sitio, y
+      // bloquearlo corta la navegaciÃ³n entera en vez de "partes de la pÃ¡gina".
       if (!isPerchanceSession && !NavDomains.isPerchanceHost(targetHostForAdCheck) &&
-          targetHostForAdCheck && (isAggressiveAdNavigation(url) || isExplicitlyBlocked(targetHostForAdCheck, sourceUrl))) {
+          targetHostForAdCheck && (isAggressiveAdNavigation(url, { sameSite: isSameSiteRedirect }) || isExplicitlyBlocked(targetHostForAdCheck, sourceUrl))) {
         try { navigationEvent.preventDefault(); } catch {}
         try { getMainWin()?.webContents?.send('req-blocked', { type: 'navigation', url, msg: 'RedirecciÃ³n a dominio de anuncios bloqueada' }); } catch {}
         return;
       }
-      const isSameSiteRedirect = !!sourceUrl && NavTransitions.isSameNavigationSite(sourceUrl, url);
       if (isSameSiteRedirect || (sourceUrl && NavTransitions.allowNavigationTransition(sourceUrl, url))) {
         NavExplicit.keepExplicitNavigationAlive(wc.id);
         return;

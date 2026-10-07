@@ -137,9 +137,11 @@ async function loadPermissionsList() {
     : [];
   const activeDomain = normalizeDomainInput($('permission-domain')?.value || getCurrentPageDomain());
   const discoveredPageHosts = await collectPageRelatedHosts().catch(() => []);
-  const discoveredStreamHosts = Array.from(state.streamItems.values()).map(item => normalizeDomainInput(item?.url || '')).filter(Boolean);
+  // Solo hosts relacionados con la página actual (DOM + hints del dominio
+  // activo). La acumulación global de streams pertenece a su sección de
+  // medios, no al panel de permisos.
   const hintedHosts = activeDomain ? (state.permissionHostHints[activeDomain] || []) : [];
-  const allDiscoveredHosts = [...new Set([...discoveredPageHosts, ...discoveredStreamHosts, ...hintedHosts, ...(activeDomain ? [activeDomain] : [])])];
+  const allDiscoveredHosts = [...new Set([...discoveredPageHosts, ...hintedHosts, ...(activeDomain ? [activeDomain] : [])])];
   // Hosts que el motor de adblock (listas de filtros, no solo reglas
   // manuales) bloqueó de verdad en la página activa — antes "Hosts cargados"
   // solo miraba customBlocks/allowlist, así que algo bloqueado por las
