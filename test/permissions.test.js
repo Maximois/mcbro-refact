@@ -69,6 +69,50 @@ describe('YouTube usa las reglas normales del adblock', () => {
   });
 });
 
+describe('same-site: el dominio de la página nunca es bloqueado por heurísticas', () => {
+  const makeHandler = (engineMatch = false) => createBlockHandler(
+    () => ({ match: () => ({ match: engineMatch }) }),
+    [],
+    () => true,
+    category => ['ads', 'trackers'].includes(category),
+    null, true, null, null, null
+  );
+  const decide = (url, documentUrl, resourceType, engineMatch) => {
+    let decision = null;
+    makeHandler(engineMatch)({ url, documentUrl, resourceType }, r => { decision = r; });
+    return decision;
+  };
+
+  test('permite recursos propios con tokens de ruta de ads (/get/, ad-)', () => {
+    assert.deepEqual(decide('https://cdn.wartale.com/api/get/img.webp', 'https://www.wartale.com/', 'xhr', false), { cancel: false });
+    assert.deepEqual(decide('https://www.wartale.com/get/thumbnail.jpg', 'https://www.wartale.com/', 'image', false), { cancel: false });
+    assert.deepEqual(decide('https://www.wartale.com/uploads/ad-cover.jpg', 'https://www.wartale.com/', 'script', false), { cancel: false });
+  });
+
+  test('nunca bloquea el frame principal por tokens de ruta', () => {
+    assert.deepEqual(decide('https://wartale.com/get/page', '', 'main_frame', false), { cancel: false });
+  });
+
+  test('sigue bloqueando ads y trackers de terceros con los mismos tokens', () => {
+    assert.deepEqual(decide('https://a.adtng.com/get/123', 'https://www.wartale.com/', 'script', false), { cancel: true });
+    assert.deepEqual(decide('https://cdn.exadtest.net/banner-ads.html', 'https://www.wartale.com/', 'script', false), { cancel: true });
+    assert.deepEqual(decide('https://www.google-analytics.com/analytics.js', 'https://www.wartale.com/', 'script', false), { cancel: true });
+  });
+
+  test('una regla explícita del motor de listas sigue aplicando mismo sitio', () => {
+    assert.deepEqual(decide('https://www.wartale.com/xx.js', 'https://www.wartale.com/', 'script', true), { cancel: true });
+  });
+
+  test('las marcas de red (pagead) siguen bloqueando en el mismo sitio', () => {
+    assert.deepEqual(decide('https://www.youtube.com/pagead/ads?client=ca', 'https://www.youtube.com/watch?v=1', 'xhr', false), { cancel: true });
+    assert.deepEqual(decide('https://www.youtube.com/pagead/iframe?ca=1', 'https://www.youtube.com/watch?v=1', 'subFrame', false), { cancel: true });
+  });
+
+  test('los tokens genéricos no cortan subframes same-site (contenido propio)', () => {
+    assert.deepEqual(decide('https://www.wartale.com/get/frame', 'https://www.wartale.com/', 'subFrame', false), { cancel: false });
+  });
+});
+
 // ── normalizeSiteHost ──────────────────────────────────────────────────
 describe('normalizeSiteHost', () => {
   test('extrae el host de una URL normal', () => {

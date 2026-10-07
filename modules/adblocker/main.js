@@ -56,18 +56,25 @@ const AD_NETWORK_HOSTS = [
   'onclickads.net', 'pushnotifications.com'
 ];
 
-// Tokens de ruta claramente publicitarios (formato VAST, /ads/, etc.).
+// Tokens de ruta que son marcas de redes publicitarias (pagead, VAST,
+// adserver...): no chocan con recursos propios de un sitio legítimo, así que
+// aplican incluso en el mismo sitio (p. ej. youtube.com/pagead/...).
 const AD_PATH_TOKENS = [
-  '/ads/', '/adserver', '/adframe', '/popunder', '/click-redirect',
-  '/popup', '/popads', '/advert', '/banner', '/vast',
-  '/ad?', '/ad/', '/ad-', '/ads?', '/get/',
+  '/adserver', '/adframe', '/popunder', '/click-redirect',
+  '/popads', '/vast',
   'adsbygoogle', 'pagead', 'prebid', 'adservice', 'adsystem',
-  'doubleclick', 'googlesyndication', 'googleadservices', 'adtng',
-  'adnami', 'adpushup', 'banner-ad', 'ad-banner'
+  'doubleclick', 'googlesyndication', 'googleadservices', 'adtng', 'adnami',
+  'adpushup'
+];
+// Subcadenas genéricas: bloquean ads de terceros, pero en el mismo sitio
+// chocaban con contenido propio del sitio (wartale: /api/get/, ad-cover.jpg).
+const GENERIC_AD_SUBSTRINGS = [
+  '/ads/', '/ad?', '/ad/', '/ad-', '/ads?', '/get/',
+  '/banner', '/popup', '/advert', 'banner-ad', 'ad-banner'
 ];
 const TRACKER_TOKENS = /analytics|tracking|tracker|telemetry|pixel|beacon|scorecardresearch|quantserve|demdex|hotjar|clarity\.ms/i;
 
-function isAggressiveAdNavigation(rawUrl) {
+function isAggressiveAdNavigation(rawUrl, opts = {}) {
   try {
     const url = new URL(rawUrl);
     const host = url.hostname.toLowerCase();
@@ -75,12 +82,16 @@ function isAggressiveAdNavigation(rawUrl) {
     const lower = rawUrl.toLowerCase();
     // Redes publicitarias conocidas (dominio o subdominio).
     if (AD_NETWORK_HOSTS.some(h => host === h || host.endsWith('.' + h))) return true;
-    // Tokens de ruta claramente publicitarios.
+    // Tokens de marca de red: bloquean también en same-site.
     if (AD_PATH_TOKENS.some(t => lower.includes(t))) return true;
     // Casos exactos de banner/iframe (e.g. a.adtng.com/get/... y spot_id_...)
-    if (host.includes('adtng.com') || /spot_id_[0-9]+/i.test(lower) || /google_ads_iframe|aswift_|adsbygoogle|adslot|banner-ad|ad-banner/.test(lower)) {
+    if (host.includes('adtng.com') || /spot_id_[0-9]+/i.test(lower) || /google_ads_iframe|aswift_|adsbygoogle|adslot/.test(lower)) {
       return true;
     }
+    // Subcadenas genéricas: solo contra terceros (ver arriba).
+    if (opts.sameSite) return false;
+    if (GENERIC_AD_SUBSTRINGS.some(t => lower.includes(t))) return true;
+    if (/banner-ad|ad-banner/.test(lower)) return true;
     return false;
   } catch {
     return false;
@@ -321,6 +332,16 @@ function createBlockHandler(getEngine, allowedDomains, isEnabled, isCategoryEnab
       let documentHost = '';
       try { documentHost = new URL(documentUrl).hostname.toLowerCase(); } catch {}
 
+      // El dominio de la página jamás es publicidad: los tokens genéricos de
+      // ruta y el heurístico de trackers solo aplican a hosts de TERCEROS
+      // (el frame principal tampoco se toca). Las marcas de redes (pagead,
+      // doubleclick, adsbygoogle...) sí cortan también same-site, porque no
+      // chocan con recursos propios. Las reglas explícitas del usuario y el
+      // motor de listas siguen aplicando igual (p. ej. un bloqueo manual o
+      // una regla de lista same-site).
+      const mainFrame = details.resourceType === 'main_frame' || details.resourceType === 'mainFrame';
+      const sameSite = mainFrame || (!!documentHost && sameDomainOrSub(host, documentHost));
+
       if (isAdblockHostAllowed(host) || isAdblockSiteAllowed(documentHost)) return callback({ cancel: false });
 
       // Perchance ejecuta cada generador en un subdominio propio y depende de
@@ -349,7 +370,7 @@ function createBlockHandler(getEngine, allowedDomains, isEnabled, isCategoryEnab
       if (details.resourceType === 'subFrame') {
         const frameUrl = details.url || '';
         const docUrl = details.documentUrl || details.referrer || '';
-        const isAdFrame = isAggressiveAdNavigation(frameUrl)
+        const isAdFrame = isAggressiveAdNavigation(frameUrl, { sameSite })
           || /(?:^|\.)?(adtng|doubleclick|googlesyndication|googleadservices|amazon-adsystem|google-analytics|googletagmanager|adsbygoogle|aswift|pagead2\.googlesyndication)\./i.test(frameUrl)
           || /google_ads_iframe|aswift_|adsbygoogle|adslot|banner-ad|ad-banner|advertisement|spot_id_[0-9]+/i.test(frameUrl)
           || /google_ads_iframe|aswift_|adsbygoogle|adslot|banner-ad|ad-banner|advertisement|spot_id_[0-9]+/i.test(docUrl);
@@ -385,11 +406,11 @@ function createBlockHandler(getEngine, allowedDomains, isEnabled, isCategoryEnab
       const siteTrusted = isSiteAllowed(host);
 
       const isTrackerRequest = TRACKER_TOKENS.test(details.url);
-      if (isCategoryEnabled('trackers') && isTrackerRequest && !siteTrusted) {
+      if (isCategoryEnabled('trackers') && isTrackerRequest && !siteTrusted && !sameSite) {
         if (blockCb) blockCb(details, 'trackers');
         return callback({ cancel: true });
       }
-      if (isCategoryEnabled('ads') && isAggressiveAdNavigation(details.url)) {
+      if (isCategoryEnabled('ads') && isAggressiveAdNavigation(details.url, { sameSite })) {
         if (blockCb) blockCb(details, 'ads');
         return callback({ cancel: true });
       }

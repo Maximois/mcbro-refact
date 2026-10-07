@@ -57,6 +57,44 @@ function loadUrl(url) {
 
 // ── webview events ──────────────────────────────
 const selectionPreloadPath = new URL('../preload/selection-bridge.js', document.location.href).toString();
+// Filtro cosmético (reglas ## del adblock) inyectado en un <webview>. Es
+// global para poder usarla también desde el panel de sesiones aisladas
+// (sessions.js), que tiene sus propios webviews y se quedaba sin filtrar.
+async function applyCosmeticFiltersToWebview(wv) {
+  try {
+    if (!wv || !mc?.adblockCosmetics) return;
+    let pageUrl = '';
+    try { pageUrl = wv.getURL(); } catch {}
+    if (!pageUrl || !/^https?:\/\//i.test(pageUrl)) return;
+    const result = await mc.adblockCosmetics(pageUrl);
+    await wv.executeJavaScript(`(() => {
+      try {
+        const styleId = 'mc-adblock-cosmetics';
+        let el = document.getElementById(styleId);
+        if (el && el.tagName === 'STYLE') el.remove();
+      } catch {}
+    })()`).catch(() => {});
+    if (result?.ok && result.css) {
+      const cssEscaped = result.css
+        .replace(/\\/g, '\\\\')
+        .replace(/`/g, '\\`')
+        .replace(/\$/g, '\\$');
+      await wv.executeJavaScript(`(() => {
+        try {
+          const styleId = 'mc-adblock-cosmetics';
+          let el = document.getElementById(styleId);
+          if (!el || el.tagName !== 'STYLE') {
+            el = document.createElement('style');
+            el.id = styleId;
+            (document.head || document.documentElement || document.body).appendChild(el);
+          }
+          el.textContent = \`${cssEscaped}\`;
+        } catch {}
+      })()`).catch(() => {});
+    }
+  } catch {}
+}
+
 function bindWebviewToTab(id, wv) {
   if (!wv) return;
   // Guard anti-duplicación: si este webview ya fue bindeado, no agregar
@@ -80,40 +118,7 @@ function bindWebviewToTab(id, wv) {
     })()`).catch(() => {});
   };
 
-  const injectCosmeticFilters = async () => {
-    try {
-      if (!mc?.adblockCosmetics) return;
-      let pageUrl = '';
-      try { pageUrl = wv.getURL(); } catch {}
-      if (!pageUrl || !/^https?:\/\//i.test(pageUrl)) return;
-      const result = await mc.adblockCosmetics(pageUrl);
-      await wv.executeJavaScript(`(() => {
-        try {
-          const styleId = 'mc-adblock-cosmetics';
-          let el = document.getElementById(styleId);
-          if (el && el.tagName === 'STYLE') el.remove();
-        } catch {}
-      })()`).catch(() => {});
-      if (result?.ok && result.css) {
-        const cssEscaped = result.css
-          .replace(/\\/g, '\\\\')
-          .replace(/`/g, '\\`')
-          .replace(/\$/g, '\\$');
-        await wv.executeJavaScript(`(() => {
-          try {
-            const styleId = 'mc-adblock-cosmetics';
-            let el = document.getElementById(styleId);
-            if (!el || el.tagName !== 'STYLE') {
-              el = document.createElement('style');
-              el.id = styleId;
-              (document.head || document.documentElement || document.body).appendChild(el);
-            }
-            el.textContent = \`${cssEscaped}\`;
-          } catch {}
-        })()`).catch(() => {});
-      }
-    } catch {}
-  };
+  const injectCosmeticFilters = () => applyCosmeticFiltersToWebview(wv);
 
   wv.addEventListener('ipc-message', (event) => {
     if (event.channel === 'mc-history-nav') {

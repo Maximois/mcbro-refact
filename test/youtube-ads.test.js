@@ -344,4 +344,12 @@ describe('inyeccion del script', () => {
     assert.ok(PRELOAD.includes("host === 'youtube.com'"));
     assert.ok(PRELOAD.includes("youtube-nocookie.com"));
   });
+
+  test('los webviews del panel de sesiones también llevan el preload con la poda', () => {
+    const SESSIONS = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'sessions.js'), 'utf8');
+    assert.ok(
+      SESSIONS.includes("setAttribute('preload', selectionPreloadPath)"),
+      'sin preload, en las sesiones aisladas el anuncio de video de YouTube viaja sin podar'
+    );
+  });
 });

@@ -195,6 +195,12 @@ const Sessions = {
     wv.dataset.sessionId = this.activeId;
     wv.dataset.tabId = String(id);
     wv.setAttribute('partition', 'persist:mc-session-' + this.activeId);
+    // Misma paridad que los webviews de pestaña normal (app.js): el preload
+    // trae la poda de anuncios de YouTube (json-prune), el puente de selección
+    // y la navegación con botones del ratón. Sin él, el aislamiento de datos
+    // se comía también las funciones del navegador principal.
+    wv.setAttribute('preload', selectionPreloadPath);
+    wv.setAttribute('allow', 'autoplay; media; encrypted-media; fullscreen');
     wv.setAttribute('allowpopups', '');
     wv.style.cssText = 'width:100%;height:100%;';
     wv.style.display = 'none';
@@ -213,6 +219,12 @@ const Sessions = {
   },
 
   bindSessionWebview(wv, id) {
+    // Filtros cosméticos del adblock: el panel de sesiones usa webviews
+    // propios, así que bindWebviewToTab no los cubre. Misma inyección que la
+    // pestaña normal (app.js), en dom-ready de cada documento.
+    wv.addEventListener('dom-ready', () => {
+      try { applyCosmeticFiltersToWebview(wv); } catch {}
+    });
     wv.addEventListener('did-navigate', () => {
       if (this.activeTabId === id) {
         this.syncUrlbar();
