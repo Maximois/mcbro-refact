@@ -382,14 +382,23 @@ const PROVIDERS = {
   groq: {
     name: 'Groq (gratis)',
     chat: async ({ signal, key, model, messages }) => {
+      // mixtral-8x7b-32768 fue dado de baja en Groq: reencaminar a un modelo
+      // disponible con cupo alto para no fallar con el valor guardado.
+      const m = /^mixtral/i.test(model || '') ? 'llama-3.1-8b-instant' : (model || 'llama-3.1-8b-instant');
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: model || 'llama-3.1-8b-instant', messages, stream: false }),
+        body: JSON.stringify({ model: m, messages, stream: false }),
         signal
       });
       const data = await res.json();
-      if (data.error) throw new Error(data.error.message);
+      if (data.error) {
+        const rate = res.status === 429 || /rate limit|too many|tokens per minute|requests per day/i.test(data.error.message || '');
+        if (rate) {
+          throw new Error('Rate limit de Groq (429). El plan gratis limita tokens por minuto y el contexto largo (historial + documento + pagina) lo consume rápido. Esperá un minuto, o achicá lo que le pasás (lab desactivado manda menos contexto).');
+        }
+        throw new Error(data.error.message);
+      }
       return data.choices?.[0]?.message?.content || JSON.stringify(data);
     }
   },
@@ -453,6 +462,13 @@ function setup(ctx) {
 
   ipcMain.handle('ai:chat', async (_e, opts) => {
     _abortController = new AbortController();
+    // Timeout general para no quedar "Pensando…" para siempre si el proveedor
+    // no responde o la red se corta (el fetch no tiene timeout propio).
+    let timedOut = false;
+    const killer = setTimeout(() => {
+      timedOut = true;
+      try { _abortController && _abortController.abort(); } catch {}
+    }, 180000);
     try {
       const { messages, system, provider, key, model, url } = opts || {};
       if (!messages || !messages.length) return { error: 'Sin mensajes' };
@@ -473,17 +489,31 @@ function setup(ctx) {
         return { error: `API key de ${prov.name} no configurada — agregala en ⚙ Configuración` };
       }
 
+      const mod = model || (provName === 'ollama' ? _aiCfg.ollamaModel
+           : provName === 'gemini' ? _aiCfg.geminiModel
+           : provName === 'groq' ? _aiCfg.groqModel
+           : provName === 'opencode' ? _aiCfg.opencodeModel
+           : _aiCfg.openaiModel);
+      // Métrica del payload real: chars aprox (dataUrl de imágenes al 4% del
+      // tamaño para estimar, si no el log sería ilegible con varios MB).
+      const _len = (c) => typeof c === 'string' ? c.length
+        : Array.isArray(c) ? c.reduce((a, p) => a + (
+            p && p.type === 'text' ? String(p.text || '').length
+            : p && p.type === 'image_url' && p.image_url ? Math.min(p.image_url.url ? p.image_url.url.length : 0, 1000) / 20 : 0), 0)
+        : String(c == null ? '' : c).length;
+      const approx = Math.round(full.reduce((a, m) => a + _len(m.content), 0) / 1024);
+      const payloadMsgs = full.map(m => `${m.role}:${Math.round(_len(m.content) / 1024)}KB`).join(' ');
+      safeLog(`[AI-CHAT] ${provName} ${mod} → ${full.length} msgs | ${approx} KB aprox | ${payloadMsgs}`);
+      const t0 = Date.now();
+
       const result = await prov.chat({
         signal: _abortController.signal,
         url: url || _aiCfg.ollamaUrl,
-        model: model || (provName === 'ollama' ? _aiCfg.ollamaModel
-             : provName === 'gemini' ? _aiCfg.geminiModel
-             : provName === 'groq' ? _aiCfg.groqModel
-             : provName === 'opencode' ? _aiCfg.opencodeModel
-             : _aiCfg.openaiModel),
+        model: mod,
         key: k,
         messages: full
       });
+      safeLog(`[AI-CHAT] respuesta en ${((Date.now() - t0) / 1000).toFixed(1)}s`);
       // Detectar respuesta multimodal (JSON con type: 'multimodal')
       try {
         const parsed = JSON.parse(result);
@@ -493,9 +523,11 @@ function setup(ctx) {
       } catch {}
       return { text: result };
     } catch (err) {
-      if (err.name === 'AbortError') return { aborted: true, error: 'Cancelado' };
+      if (err.name === 'AbortError' && !timedOut) return { aborted: true, error: 'Cancelado' };
+      if (timedOut) return { error: 'El proveedor no respondió en 180s (red cortada o servidor lento). Probá de nuevo.' };
       return { error: err.message };
     } finally {
+      clearTimeout(killer);
       _abortController = null;
     }
   });
