@@ -198,7 +198,6 @@ const AI = {
 
       <div class="ai-header">
         <div class="ai-title-wrapper">
-          <span class="ai-sparkle">✦</span>
           <h2>MC-AI</h2>
         </div>
         <button id="ai-sb-close" class="close-sidebar-btn" onclick="AI.close()" title="Cerrar panel">&times;</button>
@@ -503,8 +502,9 @@ const AI = {
     s('ol-model').value = this.cfg.ollamaModel || 'phi3:mini';
     s('gm-key').value = this.cfg.geminiKey || '';
     s('gm-model').value = this.cfg.geminiModel || 'gemini-2.5-flash';
+    const gqModel = /^mixtral/i.test(this.cfg.groqModel || '') ? 'llama-3.1-8b-instant' : (this.cfg.groqModel || 'llama-3.1-8b-instant');
     s('gq-key').value = this.cfg.groqKey || '';
-    s('gq-model').value = this.cfg.groqModel || 'llama-3.1-8b-instant';
+    s('gq-model').value = gqModel;
     s('oa-key').value = this.cfg.openaiKey || '';
     s('oa-model').value = this.cfg.openaiModel || 'gpt-4o-mini';
     s('oc-key').value = this.cfg.opencodeKey || '';
@@ -611,15 +611,52 @@ const AI = {
    * Documento abierto en el editor, para pegarlo al mensaje.
    * Devuelve null si no hay documento o si el módulo no está cargado.
    */
-  async getDocContext() {
+  async getDocContext(maxChars = 6000) {
     try {
       if (typeof mc === 'undefined' || !mc || typeof mc.docContext !== 'function') return null;
       const snap = await mc.docState({});
       if (!snap || !snap.open) return null;
-      const res = await mc.docContext({ maxChars: 6000 });
+      const res = await mc.docContext({ maxChars });
       if (!res || !res.ok) return null;
       return res;
     } catch { return null; }
+  },
+
+  // Capacidad de contexto según proveedor/modelo: cuánto contexto aguanta y qué
+// cupo por minuto tiene. Groq gratis ~6K token/min → contexto chico para que
+// el request no se coma el cupo; Gemini maneja ~1M de contexto → aprovechar
+// casi todo. ollama local = chico por ventana corta.
+  _modelCapacity(eff) {
+    const p = eff.provider;
+    if (p === 'groq' || p === 'ollama') return 'small';
+    if (p === 'gemini') return 'large';
+    return 'medium';  // openai / opencode
+  },
+
+  // Presupuesto de contexto según modo Y capacidad del modelo.
+  // - Editor/chat general: corto para Groq (así no agota el cupo por minuto),
+  //   y crece con la capacidad del modelo (Gemini maneja el documento casi
+  //   entero), siempre con la ventana de mensajes recientes (conversacional).
+  // - Lab: al máximo de lo que aguante el modelo (el AI necesita el código).
+  // Claves: hist = tokens de historial; doc/lab/page/sys = caracteres.
+  _budgets() {
+    const eff = this.getEffectiveCfg();
+    const cap = this._modelCapacity(eff);
+    const T = {
+      small: {
+        editor: { hist: 1200, doc: 1500, lab: 3000, page: 2500, sys: 6000 },
+        lab:    { hist: 4800, doc: 4000, lab: 15000, page: 8000, sys: 16000 }
+      },
+      medium: {
+        editor: { hist: 8000, doc: 24000, lab: 16000, page: 12000, sys: 24000 },
+        lab:    { hist: 12000, doc: 30000, lab: 50000, page: 20000, sys: 40000 }
+      },
+      large: {
+        editor: { hist: 24000, doc: 80000, lab: 40000, page: 30000, sys: 60000 },
+        lab:    { hist: 40000, doc: 80000, lab: 100000, page: 40000, sys: 100000 }
+      }
+    };
+    return T[cap][this._labMode ? 'lab' : 'editor'];
   },
 
   getTabContextJSON() {
@@ -735,7 +772,7 @@ const AI = {
     }
     // Documento abierto en el editor: entra al mensaje real, no al system
     // prompt, así el modelo lo tiene fresco y con el hash correcto.
-    const docCtx = await this.getDocContext();
+    const docCtx = await this.getDocContext(this._budgets().doc);
     if (docCtx) {
       const bloque = [
         '',
@@ -881,12 +918,100 @@ const AI = {
     document.querySelectorAll('#ai-msgs .thinking').forEach(el => el.remove());
   },
 
+  // Normaliza un mensaje a lo que aceptan los proveedores: string o array de
+  // partes OpenAI (text / image_url). Vacío si no quedó nada util.
+  // Con keepImages=false las imágenes viejas del historial se reemplazan por
+  // un marcador: mandar el dataUrl real (que puede pesar megabytes) de cada
+  // turno pasado llenaba/saturaba el request.
+  _msgContent(content, keepImages = true) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      const parts = content.flatMap(p => {
+        if (!p) return [];
+        if (p.type === 'text') return p.text ? [p] : [];
+        if (p.type === 'image_url' && p.image_url && p.image_url.url) {
+          return keepImages ? [p] : [{ type: 'text', text: '[imagen adjunta]' }];
+        }
+        return [];
+      });
+      return parts.length ? parts : '';
+    }
+    try { return String(content == null ? '' : content); } catch { return ''; }
+  },
+
+  // Coste aproximado en caracteres (≈1 token por 4 caracteres). Cada imagen
+  // cuenta una masa fija: no gasta el presupuesto pero se anota como pesada.
+  _msgCost(content, keepImages = true) {
+    if (typeof content === 'string') return String(content).length;
+    if (Array.isArray(content)) {
+      let c = 0;
+      for (const p of content) {
+        if (!p) continue;
+        if (p.type === 'text') c += String(p.text || '').length;
+        else if (p.type === 'image_url') c += keepImages ? 600 : 40;
+      }
+      return c;
+    }
+    try { return String(content == null ? '' : content).length; } catch { return 0; }
+  },
+
+  // ¿El usuario preguntó explícitamente por la página o las pestañas?
+  // Sino NO se manda nada del navegador (tabs, URL activa, DOM): esos datos
+  // ensucian el request y consumen tokens sin que el modelo los.use.
+  _wantsPageContext(t) {
+    const s = t || '';
+    return /(p[aá]gina|pesta[nñ]as?|tab(?:s)?)\b/.test(s)
+      || /url|dominio|iframe|metadatos|scrape/.test(s)
+      || /que (hay|est[aá]|tengo|existe) (?:abierto|abierta|en)(?: activo)?/i.test(s)
+      || /cual es la (url|pagina|pesta[nñ]a) activa/i.test(s)
+      || /ve (?:el|la) (?:dom|html|web) de la (?:pagina|web)/i.test(s)
+      || /la pagina|en esta web|de la web activa|del sitio/i.test(s);
+  },
+
+  // ¿El usuario pidió explícitamente que use la conversación anterior?
+  // Por defecto el chat NO manda historial (ahorro de tokens/cupo); solo si
+  // hay una frase de continuación se incluye el historial recortado.
+  _wantsHistory(t) {
+    return /continu[áa]|segui|siguiente|ten[ée] en cuenta|record[aá]|historial de la conversacion|conversacion anterior|lo anterior|todo lo que (hablamos|dijimos|dijiste)|como ven[íi]a|anterior(mente)?|todo el contexto|desde el principio|contexto de la conversacion|segu[íi] con|cambia (nada|algo) de lo anterior|bas[aá]ndote en lo que (dijimos|hablamos)|us[aá] el historial/i.test(t || '');
+  },
+
+  // Historial para la API: siempre entran los últimos ~6 mensajes (2-3 turnos)
+  // para que la conversación tenga continuidad; el resto del historial solo si
+  // el usuario pidió seguirla (this._useHistory). Las imágenes reales viajan
+  // solo en el turno más reciente; las pasadas se mandan como marcador.
+  buildApiMessages(budgetTokens = 6000) {
+    const CHAR_BUDGET = budgetTokens * 4;  // ≈1 token por 4 caracteres
+    const msgs = (this.msgs || []).filter(m => m && (m.role === 'user' || m.role === 'assistant'));
+    const base = this._useHistory ? 0 : Math.max(msgs.length - 6, 0);
+    const scope = msgs.slice(base);
+    const out = [];
+    let used = 0;
+    for (let i = scope.length - 1; i >= 0; i--) {
+      const keepImages = !out.length;  // solo el último turno conserva adjuntos reales
+      const content = this._msgContent(scope[i].content, keepImages);
+      if (!content) continue;
+      const cost = this._msgCost(scope[i].content, keepImages);
+      if (out.length && used + cost > CHAR_BUDGET) break;
+      used += cost;
+      out.unshift({ role: scope[i].role, content });
+    }
+    return out;
+  },
+
   async continueChat(lastText = '', depth = 0) {
     // Si ya hubo un send() nuevo, abortar esta cadena obsoleta
     if (this._stopFlag) { this.setBtnMode('send'); return; }
     if (depth > 5) { this.setBtnMode('send'); this.appendMsg('system', '⏹ Máximo de iteraciones'); return; }
     const myGen = this._generation;  // Capturar generación actual
     const thinkEl = this.appendMsg('thinking', 'Pensando…');
+    // Cronómetro visible: si tarda, que se vea el tiempo real (y diagnóstico).
+    const thinkStart = Date.now();
+    const thinkTimer = setInterval(() => {
+      if (thinkEl && thinkEl.parentNode) {
+        thinkEl.textContent = `Pensando… (${Math.round((Date.now() - thinkStart) / 1000)}s)`;
+      }
+    }, 2000);
+    const clearThink = () => { clearInterval(thinkTimer); if (thinkEl) thinkEl.remove(); };
 
     const t = lastText || '';
     // Detectar cambio de contexto: si el usuario cambió de tema, limpiar historial anterior
@@ -896,27 +1021,41 @@ const AI = {
       this.msgs = this.msgs.slice(-2);
       this.appendMsg('system', '🔄 Tema cambiado — empezando fresh');
     }
-    if (depth === 0) this._lastUserMsg = t;
+    if (depth === 0) {
+      // Marco el inicio del intercambio actual: sin "continuá lo anterior", el
+      // modelo solo ve este turno (buildApiMessages parte desde acá).
+      this._lastUserMsg = t;
+      this._exchangeStart = this.msgs.length - 1;
+      this._useHistory = this._wantsHistory(t);
+    }
+    const b = this._budgets();  // Presupuesto segun modo (lab/editor) y proveedor
 
     let ctx = '';
+    const wantsPage = this._wantsPageContext(t);
+    // Contexto de código/lab solo cuando corresponde (lab activo, modo
+    // coder/gamedev, o el mensaje habla de código). Si no, el modelo no ve
+    // ni el codigo del lab ni las reglas/leyendas de lab:code (menos tokens,
+    // menos ruido, no menciona el lab espontáneamente).
+    const wantsCode = this._labMode || this.activeMode === 'coder' || this.activeMode === 'gamedev'
+      || /cod(?:igo|igo)|html|css|javascript|\blab\b|\bjuego\b|\bgame\b/i.test(t);
     try {
-      // Pestañas abiertas
+      // Pestañas abiertas (solo si el usuario preguntó por ellas/página)
       const allTabs = typeof window.__mcGetTabs === 'function' ? window.__mcGetTabs() : [];
-      if (allTabs.length) {
+      if (wantsPage && allTabs.length) {
         ctx += `\n## PESTAÑAS ABIERTAS (${allTabs.length})\n`;
         for (const tab of allTabs) {
           const marker = tab.id === (typeof window.__mcGetActiveTabId === 'function' ? window.__mcGetActiveTabId() : null) ? ' ← ACTIVA' : '';
           ctx += `  [ID ${tab.id}] ${tab.title} — ${tab.url}${marker}\n`;
         }
       }
-      // Código actual del laboratorio (para que el AI pueda modificarlo)
+      // Código actual del laboratorio (solo si hay contexto de código)
       const labCode = document.getElementById('lab-code')?.value;
-      if (labCode && labCode.trim()) {
+      if (wantsCode && labCode && labCode.trim()) {
         const bt = '`';
-        ctx += '\n## CÓDIGO ACTUAL DEL LABORATORIO (edita y reemplaza con ' + bt + bt + bt + 'lab:code cuando el usuario pida cambios):\n' + bt + bt + bt + 'html\n' + labCode.slice(0, 15000) + '\n' + bt + bt + bt;
+        ctx += '\n## CÓDIGO ACTUAL DEL LABORATORIO (edita y reemplaza con ' + bt + bt + bt + 'lab:code cuando el usuario pida cambios):\n' + bt + bt + bt + 'html\n' + labCode.slice(0, b.lab) + '\n' + bt + bt + bt;
       }
       // Logs de consola del lab (errores, warnings, output)
-      if (typeof labGetConsoleLogs === 'function') {
+      if (wantsCode && typeof labGetConsoleLogs === 'function') {
         const logs = labGetConsoleLogs();
         if (logs.length) {
           ctx += '\n## LOGS DEL LABORATORIO (últimos ' + logs.length + ' mensajes):\n';
@@ -927,74 +1066,63 @@ const AI = {
         }
       }
       const tabUrl = document.getElementById('urlinput')?.value;
-      if (tabUrl && tabUrl !== 'mc://newtab') {
+      if (wantsPage && tabUrl && tabUrl !== 'mc://newtab') {
         ctx += `\nURL activa navegador: ${tabUrl}`;
-        const wantsDetail = !t || t.length < 3 ||
-          /página|pagina|web|url|html|site|analiza|busca|extrae|stream|video|descarga|metadata|source|src|link|player|embed|iframe/i.test(t);
-        if (wantsDetail) {
-          const wv = document.querySelector('.tab-webview.active');
-          if (wv?.getWebContentsId) {
-            const res = await mc.aiPageDom({ webContentsId: wv.getWebContentsId() });
-            if (res?.html) {
-              const shaped = (res.text || '').slice(0, 8000);
-              if (shaped) ctx += `\n=== PÁGINA ACTIVA (${tabUrl}) ===\n${shaped}`;
-              this.lastPageHtml = res.html;
-              
-              try {
-                await mc.aiAutoScrape({ url: tabUrl, html: res.html });
-              } catch (e) { /* Error silencioso en background */ }
-            }
+        const wv = document.querySelector('.tab-webview.active');
+        if (wv?.getWebContentsId) {
+          const res = await mc.aiPageDom({ webContentsId: wv.getWebContentsId() });
+          if (res?.html) {
+            const shaped = (res.text || '').slice(0, b.page);
+            if (shaped) ctx += `\n=== PÁGINA ACTIVA (${tabUrl}) ===\n${shaped}`;
+            this.lastPageHtml = res.html;
+
+            try {
+              mc.aiAutoScrape({ url: tabUrl, html: res.html }).catch(() => {});
+            } catch (e) { /* Error silencioso en background */ }
           }
         }
       }
     } catch {}
 
-    const system = `Eres MC-AI, un asistente IA integrado en MC Browser.
-
-## MODO ACTIVO: ${this.activeMode}
-## MODO LABORATORIO: ${this._labMode ? 'ACTIVO' : 'INACTIVO'}
-${this._labMode ? '' : 'IMPORTANTE: El modo laboratorio está INACTIVO. NO uses el bloque lab:code. Mostrá el código HTML/CSS/JS directamente en el chat.'}
-${this.activeMode === 'casual' ? 'Modo conversación natural. Respondé como un amigo inteligente: claro, directo, sin vueltas. Explicá cosas fáciles de entender. Usá emojis con moderación. No uses jerga técnica innecesaria.' : ''}${this.activeMode === 'coder' ? 'Modo PROGRAMADOR WEB PROFESIONAL. Respondé como un senior dev: preciso, técnico, con arquitectura clara. ' + (this._labMode ? 'Siempre usá lab:code para código web.' : 'El laboratorio está INACTIVO: mostrá el código web en bloques regulares del chat.') + ' Hablá de patrones, rendimiento, escalabilidad. Mostrá opciones (pero siempre la mejor). No expliques lo obvio — pasá al código directo.' : ''}${this.activeMode === 'gamedev' ? 'Modo GAME DEVELOPER. Especialista en juegos 2D (Canvas) y 3D (Three.js). ' + (this._labMode ? 'Cuando el usuario pida un juego, generá TODO el código completo en lab:code.' : 'El laboratorio está INACTIVO: generá el código del juego en bloques regulares del chat.') + ' Conocés game loops, colisiones, shaders, física, audio, input handling, UI de juegos. Sé entusiasta y técnico.' : ''}${this.activeMode === 'private' ? 'Modo PRIVADO. Máxima protección de datos. NO guardes NADA en memoria. NO guardes bookmarks, análisis, ni datos del usuario. Respondé normal pero sin persistir nada.' : ''}${this.activeMode === 'supervised' ? 'Modo SUPERVISADO. Todas las acciones técnicas (cmd, script, fetch, scraping) requieren confirmación del usuario antes de ejecutarse. Explicá qué vas a hacer ANTES de hacerlo. Pedí permiso.' : ''}
-
-## MONITOREO DEL LABORATORIO
-Tenés acceso a los logs de consola del laboratorio (en el contexto "LOGS DEL LABORATORIO"). Si hay errores (❌), UNDÍZALOS y ofrecé soluciones. Si el usuario dice "no funciona" o "tiene errores", revisá los logs primero. Los logs incluyen console.log, console.error, console.warn y errores de runtime.
-
-## REGLAS CRÍTICAS
-
-**CAMBIO DE CONTEXTO:** Si el usuario claramente cambió de tema (dice "otra cosa", "en vez de eso", "ahora quiero...", o pide algo completamente diferente), OLVIDÁ la tarea anterior. No la continúes, no la menciones. Empezá limpio con el nuevo pedido.
-
-**RESPUESTAS:** NO uses bloques de código a menos que se pida explícitamente o estés en modo coder/gamedev. En modo casual, respondé con texto natural.
-
-**REGLAS DE CÓDIGO:**
-- ${this._labMode ? 'Lab ACTIVO: si el usuario pide código HTML/CSS/JS, usá SIEMPRE el bloque lab:code para escribirlo en el laboratorio web (preview en vivo).' : 'Lab INACTIVO: si el usuario pide código HTML/CSS/JS, mostralo en bloques regulares del chat. NO uses lab:code.'}
-- Si el usuario pide código Node.js / scripts del sistema: usá \`\`\`script.
-- Si el usuario pide comandos de terminal: usá \`\`\`cmd.
-- NUNCA pongas código ejecutable en bloques regulares del chat — siempre usá la herramienta correspondiente.
-- Hay un botón ✍ Lab que activa/desactiva el modo laboratorio. Por defecto está DESACTIVADO. Cuando lo activás, los bloques \`\`\`html, \`\`\`js, \`\`\`css se redirigen automáticamente al editor con preview en vivo. Si no está activo, el código se muestra normalmente en el chat.
-
-**REGLAS PARA CAMBIOS DE DISEÑO (CRÍTICO):**
-- ${this._labMode ? 'Cuando el usuario pida un cambio de diseño, color, layout, tamaño, posición, o cualquier modificación visual, **SIEMPRE** usá el bloque lab:code con el **CÓDIGO COMPLETO MODIFICADO** (no solo describas el cambio). Leé el código actual del laboratorio que te paso en el contexto, aplicá el cambio, y devolvé el HTML COMPLETO actualizado. NUNCA confirmes que aplicaste un cambio si no generaste un bloque lab:code con el código completo.' : 'Lab INACTIVO: si el usuario pide un cambio de diseño, mostrá el código completo modificado en un bloque regular del chat. NO uses lab:code.'}
-
-Cuando el usuario pida "analiza", "extrae", "descarga", "busca contenido", o preguntas de seguridad, activa el modo técnico: usa las herramientas disponibles, genera bloques de código, sé preciso.
-
-## PATRONES DE ARQUITECTURA — GUÍA PARA GENERAR CÓDIGO COMPLETO
-
-Cuando el usuario pida crear algo (juego, app, visualización, etc.), analizá QUÉ componentes necesita ese proyecto y generá TODO el código completo en un solo bloque ${this._labMode ? 'lab:code' : 'de código en el chat'}. No preguntes, no describas — generá.
-
-${ctx ? `## CONTEXTO ACTUAL (recortado por seguridad de presupuesto):\n${ctx.slice(0, 12000)}` : ''}`;
+    const modeLine = this.activeMode === 'casual' ? 'Conversación natural: claro, directo, sin vueltas; emojis con moderación.'
+    : this.activeMode === 'coder' ? 'Programador web senior: preciso, técnico, con arquitectura clara; pasá al código directo sin explicar lo obvio.'
+    : this.activeMode === 'gamedev' ? 'Game developer: especialista en Canvas 2D y Three.js; game loops, colisiones, física, input, shaders, audio, UI.'
+    : this.activeMode === 'private' ? 'Máxima privacidad: no persistas nada ni guardes datos del usuario.'
+    : this.activeMode === 'supervised' ? 'Toda acción técnica (cmd, script, fetch, scraping) requiere confirmación previa del usuario. Explicá antes de ejecutar.'
+    : '';
+    const system = `Eres MC-AI, el asistente IA integrado en MC Browser. Respondé en el idioma que use el usuario, directo y conciso.
+## MODO ACTIVO: ${this.activeMode || 'casual'}
+${modeLine ? modeLine + '\n' : ''}
+## ACERCA DE MC BROWSER
+MC Browser es un navegador de escritorio con pestañas, bloqueador de anuncios y descarga de videos/audio. Además tiene un EDITOR DE DOCUMENTOS integrado que abre y crea PDF, DOCX, TXT y Markdown (edición con deshacer/rehacer, guardar/exportar, vista previa e impresión) y un LABORATORIO WEB (editor HTML/CSS/JS con preview en vivo) para prototipar páginas y juegos. A este chat llega el documento abierto en el editor cuando lo hay, y el código del laboratorio cuando corresponde. Recordás los últimos mensajes de esta conversación.
+## REGLAS
+- No uses bloques de código salvo que se pidan o estés en modo coder/gamedev.
+- Si el usuario cambia de tema claramente, olvidá la tarea anterior.
+- Scripts Node.js → bloque \`\`\`script; comandos → \`\`\`cmd. Nunca código ejecutable en bloques regulares del chat.
+- Si piden "analiza/extrae/descarga/busca", usá el modo técnico: herramientas disponibles y precisión.
+${wantsCode ? `\n## CÓDIGO / LABORATORIO (${this._labMode ? 'ACTIVO' : 'INACTIVO'})
+- ${this._labMode ? 'Cualquier código HTML/CSS/JS pedido se escribe SIEMPRE en lab:code con el código COMPLETO (preview en vivo).' : 'El laboratorio está INACTIVO: mostrá el código HTML/CSS/JS en bloques regulares del chat, NO uses lab:code.'}
+- Cambios de diseño: devolvé el código completo modificado, nunca solo la descripción.
+- Si piden crear un juego/app/visualización, generá TODO el código completo en un solo bloque, sin preguntar.` : ''}
+${ctx ? `\n## CONTEXTO ACTUAL\n${ctx.slice(0, b.sys)}` : ''}`;
 
     let result;
     try {
       const eff = this.getEffectiveCfg();
-      const apiMessages = this.buildApiMessages();
-      result = await mc.aiChat({ messages: apiMessages, system, ...eff });
+      const apiMessages = this.buildApiMessages(b.hist);
+      // Red de seguridad en el renderer: si el IPC no devuelve en 150s,
+      // cortarlo acá (el main también corta a los 180s).
+      result = await Promise.race([
+        mc.aiChat({ messages: apiMessages, system, ...eff }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('El proveedor no respondió en 150s (red cortada o servidor lento). Probá de nuevo.')), 150000))
+      ]);
     } catch (err) {
-      if (thinkEl) thinkEl.remove();
+      clearThink();
       this.setBtnMode('send');
       this.appendMsg('system', `Error de conexión: ${err.message}\nVerificá que la configuración del proveedor AI esté correcta.`);
       return;
     }
-    if (thinkEl) thinkEl.remove();
+    clearThink();
 
     // Si el usuario mandó un nuevo mensaje mientras esperábamos, descartar esta respuesta
     if (this._generation !== myGen) return;
@@ -1698,7 +1826,7 @@ const hasLabResult = toolResults.some(t => t.type === 'lab');
 
     const avatar = document.createElement('div');
     avatar.className = 'message-avatar';
-    avatar.textContent = '✦';
+    avatar.textContent = 'MC-AI';
     container.appendChild(avatar);
 
     const wrapper = document.createElement('div');
@@ -1831,7 +1959,7 @@ const hasLabResult = toolResults.some(t => t.type === 'lab');
       el.classList.add('ai-message');
       const avatar = document.createElement('div');
       avatar.className = 'message-avatar';
-      avatar.textContent = '✦';
+      avatar.textContent = 'MC-AI';
       el.appendChild(avatar);
       el.appendChild(content);
 
@@ -1978,7 +2106,7 @@ const hasLabResult = toolResults.some(t => t.type === 'lab');
 
       const btn = document.createElement('div');
       btn.className = 'ai-selection-btn';
-      btn.innerHTML = '✦ Preguntar a la IA';
+      btn.innerHTML = 'MC-AI · Preguntar a la IA';
       btn.style.cssText = `position:fixed;z-index:99999;left:${e.clientX + 10}px;top:${e.clientY - 10}px;`;
       btn.onclick = () => {
         btn.remove();
