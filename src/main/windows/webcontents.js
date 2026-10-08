@@ -155,6 +155,32 @@ function registerWebContentsListeners(deps = {}) {
             window.__mcCtxPos = { x: e.clientX, y: e.clientY, t: Date.now() };
           }, true);
         })()`).catch(() => {});
+        wc.executeJavaScript(`(() => {
+          if (window.__mcNagDefuser) return;
+          window.__mcNagDefuser = true;
+          var isPluginNag = function (el) {
+            if (el.querySelector('img[src*="chp-ads-block-detector"]')) return true;
+            var headings = el.querySelectorAll('h1,h2,h3,h4,h5,h6');
+            var foundHeading = false;
+            for (var i = 0; i < headings.length; i++) {
+              if (/bloqueador de anuncios|ad blocker|ads blocked/i.test(headings[i].textContent || '')) { foundHeading = true; break; }
+            }
+            if (!foundHeading) return false;
+            return !!(el.querySelector('a[href*="toolkitspro"]') || el.querySelector('a[href*="chp-ads-block-detector"]'));
+          };
+          var sweep = function () {
+            var all = document.querySelectorAll('body *');
+            for (var i = 0; i < all.length; i++) {
+              if (isPluginNag(all[i])) { all[i].remove(); return true; }
+            }
+            return false;
+          };
+          if (!sweep()) {
+            var obs = new MutationObserver(function () { if (sweep()) obs.disconnect(); });
+            obs.observe(document.documentElement, { childList: true, subtree: true });
+            setTimeout(function () { obs.disconnect(); }, 15000);
+          }
+        })()`).catch(() => {});
         try {
           const host = new URL(wc.getURL()).hostname.toLowerCase();
           if (host === 'monoschinos2.net' || host.endsWith('.monoschinos2.net')) {
