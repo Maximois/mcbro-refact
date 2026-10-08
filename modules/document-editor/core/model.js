@@ -74,16 +74,53 @@
     return Math.min(max, Math.max(min, n));
   }
 
+  // Nombre de familia tipografica: letras, numeros, espacios y . _ - (sin
+  // comillas ni punto y coma: va a parar a un atributo style y a un DOCX).
+  const FONT_RE = /^[\p{L}\p{N} ._-]{1,60}$/u;
+  const HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
+
+  /**
+   * Un tramo con formato. bold/italic/underline/strike admiten `false`
+   * explicito (ver core/runs.js): normalizeBlock descarta los redundantes.
+   */
   function normalizeRun(run) {
     if (!run) return null;
     const text = run.text == null ? '' : String(run.text);
     if (!text) return null;
     const out = { text };
-    if (run.bold) out.bold = true;
-    if (run.italic) out.italic = true;
-    if (run.underline) out.underline = true;
-    if (run.color && /^#[0-9a-fA-F]{3,8}$/.test(String(run.color))) out.color = String(run.color);
+    for (const key of ['bold', 'italic', 'underline', 'strike']) {
+      if (run[key] === true) out[key] = true;
+      else if (run[key] === false) out[key] = false;
+    }
+    if (run.color && HEX_RE.test(String(run.color))) out.color = String(run.color);
+    if (run.highlight && HEX_RE.test(String(run.highlight))) out.highlight = String(run.highlight);
+    if (run.font && FONT_RE.test(String(run.font).trim())) out.font = String(run.font).trim();
     if (run.size != null) out.size = clampInt(run.size, 4, 96, null);
+    return out;
+  }
+
+  /**
+   * Descarta los `false` que no cambian nada (un tramo no-negrita en un
+   * parrafo que no es negrita) y fusiona tramos contiguos con igual formato.
+   */
+  function compactBlockRuns(block) {
+    const defaults = {
+      bold: block.type === 'heading' || block.bold === true,
+      italic: block.italic === true,
+      underline: block.underline === true,
+      strike: false
+    };
+    const keys = ['bold', 'italic', 'underline', 'strike', 'color', 'highlight', 'font', 'size'];
+    const out = [];
+    for (const run of block.runs) {
+      const next = Object.assign({}, run);
+      for (const k of ['bold', 'italic', 'underline', 'strike']) {
+        if (next[k] === false && !defaults[k]) delete next[k];
+      }
+      const last = out[out.length - 1];
+      if (last && keys.every((k) => last[k] === next[k])) last.text += next.text;
+      else out.push(next);
+    }
     return out;
   }
 
@@ -147,6 +184,8 @@
     if (raw.size != null) block.size = clampInt(raw.size, 4, 96, null);
     if (raw.page != null) block.page = clampInt(raw.page, 0, 100000, 0);
     if (raw.indent != null) block.indent = clampInt(raw.indent, 0, 8, 0);
+
+    if (Array.isArray(block.runs) && block.runs.length) block.runs = compactBlockRuns(block);
 
     return block;
   }
@@ -348,6 +387,6 @@
     SCHEMA, PAGE, BLOCK_TYPES, ALIGNS,
     createDoc, normalizeDoc, normalizeBlock, clone, withBlocks,
     hashDoc, blockText, withText, hasFormatting, isSafeImageSrc,
-    plainText, toMarkdown, outline, stats, findBlocks, deriveTitle, genId
+    plainText, toMarkdown, outline, stats, findBlocks, deriveTitle, genId, normalizeRun
   };
 });

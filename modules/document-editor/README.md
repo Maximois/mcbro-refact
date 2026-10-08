@@ -49,6 +49,8 @@ core/          puro, sin Electron ni DOM. Testeable con node --test.
   zip.js         lector/escritor ZIP (métodos 0 y 8, CompressionStream)
   xml.js         parser XML tolerante a namespaces
   html.js        bloques -> HTML para preview y para printToPDF
+  runs.js        formato en línea: álgebra de tramos (aplicar, partir, unir)
+  dom-runs.js    lee un nodo del DOM y devuelve sus tramos (sin globals: se prueba con jsdom)
   text-io.js     TXT/Markdown -> bloques y viceversa
 main.js        dueño del archivo: lecturas, escrituras, diálogos, backups,
                recientes, sandbox y export a PDF (printToPDF)
@@ -92,14 +94,50 @@ Trae el texto y el **hash** actual. Después:
 { "expectedHash": "<hash del doc:read>", "ops": [
   { "op": "replace", "find": "texto exacto", "replace": "texto nuevo" },
   { "op": "insert", "after": "ancla", "block": { "type": "paragraph", "text": "..." } },
-  { "op": "style", "find": "texto", "bold": true },
+  { "op": "style", "find": "texto", "bold": true, "color": "#c00000" },
   { "op": "setTitle", "title": "..." }
 ] }
 ```
 ````
 
+`style` aplica formato SOLO al texto encontrado y respeta el que ya tenía el
+párrafo (no lo aplana). Propiedades: `bold`, `italic`, `underline`, `strike`
+(true/false; `false` quita la propiedad en ese tramo, incluso en un título que
+es negrita por estilo), `color` y `highlight` (`#rrggbb`), `font` (nombre de
+familia, p. ej. `"Georgia"`) y `size` (puntos).
+
 Si el parche vuelve con error de hash obsoleto, el documento cambió: hay que
 volver a `doc:read`. Si falla una operación, se descarta el parche entero.
+
+## Formato en línea
+
+El formato dentro de un párrafo vive en `runs` (`{ text, bold, italic,
+underline, strike, color, highlight, font, size }`). Tres piezas, todas puras
+y con tests:
+
+- `core/runs.js`: álgebra de tramos (aplicar formato a un rango, partir, unir,
+  alternar, compactar). La usan los parches de la IA y el renderer.
+- `core/dom-runs.js`: lee un nodo del DOM y devuelve sus tramos. Interpreta el
+  marcado (`b`, `i`, `u`, `s` y el `style` en línea que genera `execCommand`),
+  no el estilo calculado, así que un título en negrita por CSS no se confunde
+  con negrita de tramo.
+- `core/model.js`: `normalizeRun` valida cada propiedad (color `#hex`, fuente
+  solo letras/números/espacios) y descarta los `false` redundantes.
+
+Mientras se escribe, **el DOM es la verdad**: el formato se aplica con
+`execCommand` sobre la selección real y, al confirmar el bloque, se lee con
+`dom-runs`. Antes los tramos se reproyectaban por posición y un cambio de
+largo borraba TODO el formato del párrafo; Enter y Backspace tampoco lo
+conservaban. Ahora Enter parte el párrafo con el formato de cada mitad y
+Backspace al inicio lo une con el anterior.
+
+Un `false` explícito significa "este tramo NO lleva esa propiedad aunque el
+bloque la traiga por defecto". En DOCX se escribe `w:val="0"`.
+
+Límites actuales: el formato en línea solo existe en párrafos, títulos y citas
+(las listas y las celdas de tabla siguen siendo texto plano con formato de
+bloque). La fuente `Calibri` no se guarda en los tramos porque es la que el
+escritor DOCX pone por defecto.
 
 ## Seguridad
 
@@ -125,6 +163,8 @@ volver a `doc:read`. Si falla una operación, se descarta el parche entero.
 
 ```
 node --test test/document-editor.test.js   # núcleo, parches, DOCX, PDF
+node --test test/document-inline-format.test.js     # formato en línea (tramos, DOCX, lector del DOM)
+node --test test/document-editor-renderer.test.js   # renderer real en jsdom (Enter, Backspace, formato)
 node tools/doc-editor-smoke.js             # main con stub de Electron
 node tools/doc-editor-worker.js            # worker real de extracción
 node tools/docx-smoke.js                   # round-trip DOCX

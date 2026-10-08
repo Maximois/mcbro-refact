@@ -63,19 +63,29 @@
 
   // ------------------------------------------------------------ propiedades
 
-  /** <w:rPr> en el orden que exige el esquema: rFonts, b, i, color, sz, szCs, u. */
+  /**
+   * <w:rPr> en el orden que exige el esquema:
+   * rFonts, b, bCs, i, iCs, strike, color, sz, szCs, u, shd.
+   * Los `false` explicitos se escriben con w:val="0" para anular el estilo.
+   */
   function runProps(props) {
     if (!props) return '';
     let out = '<w:rPr>';
-    out += '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>';
-    if (props.bold) out += '<w:b/><w:bCs/>';
-    if (props.italic) out += '<w:i/><w:iCs/>';
+    const family = props.font ? X(String(props.font)) : 'Calibri';
+    out += `<w:rFonts w:ascii="${family}" w:hAnsi="${family}" w:cs="${family}"/>`;
+    if (props.bold === true) out += '<w:b/><w:bCs/>';
+    else if (props.bold === false) out += '<w:b w:val="0"/><w:bCs w:val="0"/>';
+    if (props.italic === true) out += '<w:i/><w:iCs/>';
+    else if (props.italic === false) out += '<w:i w:val="0"/><w:iCs w:val="0"/>';
+    if (props.strike === true) out += '<w:strike/>';
     if (props.color) out += `<w:color w:val="${X(String(props.color).replace('#', '').slice(0, 6).toUpperCase())}"/>`;
     if (props.size) {
       const hp = halfPoints(props.size);
       out += `<w:sz w:val="${hp}"/><w:szCs w:val="${hp}"/>`;
     }
-    if (props.underline) out += '<w:u w:val="single"/>';
+    if (props.underline === true) out += '<w:u w:val="single"/>';
+    else if (props.underline === false) out += '<w:u w:val="none"/>';
+    if (props.highlight) out += `<w:shd w:val="clear" w:color="auto" w:fill="${X(String(props.highlight).replace('#', '').slice(0, 6).toUpperCase())}"/>`;
     out += '</w:rPr>';
     return out;
   }

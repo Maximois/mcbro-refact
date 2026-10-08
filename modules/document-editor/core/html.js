@@ -43,11 +43,19 @@
     let out = '';
     for (const run of runs) {
       let html = esc(run.text).replace(/\n/g, '<br>');
-      if (run.bold) html = `<strong>${html}</strong>`;
-      if (run.italic) html = `<em>${html}</em>`;
-      if (run.underline) html = `<u>${html}</u>`;
+      if (run.bold === true) html = `<strong>${html}</strong>`;
+      if (run.italic === true) html = `<em>${html}</em>`;
+      if (run.underline === true) html = `<u>${html}</u>`;
+      if (run.strike === true) html = `<s>${html}</s>`;
       const styles = [];
+      // `false` explicito: el tramo quita lo que el bloque trae por defecto
+      // (una palabra sin negrita dentro de un titulo).
+      if (run.bold === false) styles.push('font-weight:400');
+      if (run.italic === false) styles.push('font-style:normal');
+      if (run.underline === false) styles.push('text-decoration:none');
       if (run.color) styles.push(`color:${escAttr(run.color)}`);
+      if (run.highlight) styles.push(`background-color:${escAttr(run.highlight)}`);
+      if (run.font) styles.push(`font-family:'${escAttr(run.font)}'`);
       if (run.size) styles.push(`font-size:${Number(run.size) || 11}pt`);
       if (styles.length) html = `<span style="${escAttr(styles.join(';'))}">${html}</span>`;
       out += html;
