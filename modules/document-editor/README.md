@@ -157,6 +157,31 @@ Operaciones de parche para la IA:
 ```
 Notas: `header:false` ahora se guarda explícito (antes un `false` se perdía y la primera fila volvía a ser encabezado). Al guardar como DOCX y reabrir, la primera fila se vuelve a leer como encabezado: es una limitación conocida de docx-read. Se corrigió además que `core/html.js` emitía las dimensiones de imagen sin `style=""`, por lo que el tamaño no llegaba al PDF/HTML.
 
+## Hoja de ruta (hitos)
+
+El plan del editor se trabaja por hitos. 1 y 2 están hechos e integrados en
+`main`; 3 y 4 son lo que sigue.
+
+- ☑ **Hito 1 — Formato en línea sobre la selección** (`01df4fd`): álgebra de
+  tramos (`runs.js`), lector del DOM (`dom-runs.js`), `style` del parche sobre
+  los tramos existentes, Enter/Backspace conservando el formato.
+- ☑ **Hito 2 — Tablas e imágenes** (`9bd6f7f`): operaciones puras de tabla
+  (`tables.js`), ops `table`/`image` del parche para la IA, barra contextual de
+  tabla/imagen, insertar imagen (archivo/pegar/arrastrar), redimensionar con asa
+  y texto alternativo.
+- ☐ **Hito 3 — Formato en línea en listas y celdas de tabla**: hoy `patch.js`
+  aplica el estilo a nivel de bloque en listas y tablas (no tienen `runs`); la
+  referencia es la sección *Formato en línea → Límites actuales*.
+- ☐ **Hito 4 — PDF más fiel**: extracción heurística sin OCR (los PDF escaneados
+  salen vacíos), tablas de PDF no detectadas como tablas, y export que reconstruye
+  la maquetación con CSS A4 en vez del original. Referencia: *Limitaciones*.
+
+El alcance exacto de los hitos 3 y 4 no quedó especificado por escrito en el
+repo: los definió el agente en su conversación de trabajo y la integración de 2
+llegó como patch local (el commit original traía de contrabando un
+`C:\tmp/cfg.json`, descartado al aplicar). Esta sección es el plan canónico para
+que cualquier agente retome el trabajo sin depender de esa conversación.
+
 ## Seguridad
 
 - Solo se tocan archivos concedidos: los que el usuario eligió con un diálogo,
