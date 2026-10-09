@@ -32,7 +32,7 @@ const read = (...p) => fs.readFileSync(path.join(CORE, ...p), 'utf8');
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
-async function boot(blocks) {
+async function boot(blocks, page) {
   const dom = new JSDOM(
     '<!doctype html><body><div id="topnav"></div><div id="panel-doc" class="active"><div id="doc-host"></div></div></body>',
     { runScripts: 'outside-only', pretendToBeVisual: true }
@@ -40,7 +40,7 @@ async function boot(blocks) {
   const w = dom.window;
 
   // Estado del "main": un documento y el mismo aplicador de parches que usa el main real.
-  const server = { doc: model.createDoc({ blocks }), edits: [] };
+  const server = { doc: model.createDoc({ blocks, page }), edits: [] };
   const snapshot = () => ({
     open: true, doc: server.doc, sourcePath: '', sourceName: '', format: 'docx', dirty: true,
     pages: [], pageCount: 0, warnings: [], savedFormat: 'docx',
@@ -64,6 +64,23 @@ async function boot(blocks) {
     const sel = w.getSelection();
     if (!sel.rangeCount) return false;
     const range = sel.getRangeAt(0);
+    if (cmd === 'createLink' || cmd === 'unlink') {
+      if (range.collapsed) return false;
+      if (cmd === 'unlink') {
+        const a = (range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement).closest('a');
+        if (a) a.replaceWith(...a.childNodes);
+        return true;
+      }
+      const a = w.document.createElement('a');
+      a.setAttribute('href', val);
+      a.appendChild(range.extractContents());
+      range.insertNode(a);
+      sel.removeAllRanges();
+      const r = w.document.createRange();
+      r.selectNodeContents(a);
+      sel.addRange(r);
+      return true;
+    }
     const styles = { bold: 'font-weight: bold', foreColor: `color: ${val}`, hiliteColor: `background-color: ${val}`, fontName: `font-family: ${val}` };
     if (!styles[cmd]) return cmd === 'styleWithCSS';
     if (range.collapsed) return true;
@@ -81,7 +98,7 @@ async function boot(blocks) {
   w.document.queryCommandValue = () => '';
 
   w.eval('var state = { tabs: [{ id: 1, url: "mc://doc", title: "Documento" }], activeTab: 1 };');
-  for (const f of ['model.js', 'html.js', 'runs.js', 'dom-runs.js', 'tables.js']) w.eval(read('core', f));
+  for (const f of ['model.js', 'html.js', 'runs.js', 'dom-runs.js', 'tables.js', 'pagesetup.js']) w.eval(read('core', f));
   w.eval(read('renderer.js'));
   await tick();
   await w.DocEditor.open();
@@ -385,5 +402,99 @@ describe('renderer: sin dialogos nativos (borrar bloque dejaba la pagina sin foc
     await tick(40);
     assert.equal(w.document.querySelector('.doc-modal'), null);
     assert.equal(server.doc.blocks[0].text, 'hola');
+  });
+});
+
+describe('renderer: pagina, parrafo, enlaces y zoom (hito 3)', () => {
+  const setField = (w, label, value) => {
+    const lab = Array.from(w.document.querySelectorAll('.doc-modal label')).find((l) => l.textContent.startsWith(label));
+    lab.querySelector('input,select').value = value;
+  };
+
+  withDom('el panel Pagina cambia orientacion, margenes, encabezado, pie y numeros', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'hola' }]);
+    await click(w, w.document.querySelector('#doc-page-setup'));
+    setField(w, 'Orientación', 'landscape');
+    setField(w, 'Márgenes', 'narrow');
+    setField(w, 'Encabezado', 'Informe MC');
+    setField(w, 'Pie de página', 'Confidencial');
+    setField(w, 'Número de página', 'right');
+    w.document.querySelector('.doc-modal .doc-btn.primary').click();
+    await tick(100);
+    const p = server.doc.page;
+    assert.ok(p.width > p.height, 'horizontal');
+    assert.equal(p.margin, 36);
+    assert.equal(p.header, 'Informe MC');
+    assert.equal(p.footer, 'Confidencial');
+    assert.equal(p.pageNumbers, 'right');
+    const paper = w.document.querySelector('.doc-paper');
+    assert.equal(paper.querySelector('.doc-paper-hf.head').textContent, 'Informe MC');
+    assert.match(paper.querySelector('.doc-paper-hf.foot').textContent, /Confidencial\s+1/);
+    assert.ok(Math.abs(parseFloat(paper.style.width) - p.width * 96 / 72) < 0.01, 'la hoja se dibuja horizontal');
+  });
+
+  withDom('la hoja respeta los margenes por lado', async () => {
+    const { w } = await boot([{ id: 'a', type: 'paragraph', text: 'hola' }], { width: 595, height: 842, margin: 57, marginLeft: 100, marginTop: 20 });
+    const pad = w.document.querySelector('.doc-paper').style.padding.split(/\s+/).map(parseFloat);
+    const px = (pt) => Math.round(pt * 96 / 72 * 100) / 100;
+    assert.deepEqual(pad.map((v) => Math.round(v * 100) / 100), [px(20), px(57), px(57), px(100)]);
+  });
+
+  withDom('sangria y interlineado del bloque', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'hola' }]);
+    surfaces(w)[0].dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    await click(w, w.document.querySelector('[data-block-indent="1"]'));
+    await click(w, w.document.querySelector('[data-block-indent="1"]'));
+    assert.equal(server.doc.blocks[0].indent, 2);
+    await click(w, w.document.querySelector('[data-block-indent="-1"]'));
+    assert.equal(server.doc.blocks[0].indent, 1);
+    const lh = w.document.querySelector('#doc-lh');
+    lh.value = '1.5';
+    lh.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await tick(80);
+    assert.equal(server.doc.blocks[0].lineHeight, 1.5);
+    assert.equal(w.document.querySelector('#doc-lh').value, '1.5');
+    w.document.querySelector('#doc-lh').value = '';
+    w.document.querySelector('#doc-lh').dispatchEvent(new w.Event('change', { bubbles: true }));
+    await tick(80);
+    assert.equal(server.doc.blocks[0].lineHeight, undefined);
+  });
+
+  withDom('enlace sobre la seleccion, y se quita dejandolo vacio', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'visita el sitio hoy' }]);
+    w.alert = w.confirm = w.prompt = () => { throw new Error('nativo'); };
+    select(w, surfaces(w)[0], 10, 15);
+    await click(w, w.document.querySelector('[data-inline-only="link"]'));
+    const input = w.document.querySelector('.doc-modal input');
+    input.value = 'mc.example/pagina';
+    w.document.querySelector('.doc-modal .doc-btn.primary').click();
+    await tick(100);
+    const runs = server.doc.blocks[0].runs;
+    assert.equal(runs.find((r) => r.link).text, 'sitio');
+    assert.equal(runs.find((r) => r.link).link, 'https://mc.example/pagina');
+  });
+
+  withDom('enlace peligroso se rechaza', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'visita el sitio hoy' }]);
+    select(w, surfaces(w)[0], 10, 15);
+    await click(w, w.document.querySelector('[data-inline-only="link"]'));
+    w.document.querySelector('.doc-modal input').value = 'javascript:alert(1)';
+    w.document.querySelector('.doc-modal .doc-btn.primary').click();
+    await tick(100);
+    assert.equal(server.doc.blocks[0].runs, undefined);
+    assert.match(w.document.querySelector('#doc-toast').textContent, /http/);
+  });
+
+  withDom('zoom: escala las hojas y sobrevive al repintado', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'hola' }]);
+    const z = w.document.querySelector('#doc-zoom');
+    z.value = '150';
+    z.dispatchEvent(new w.Event('change', { bubbles: true }));
+    assert.equal(w.document.querySelector('.doc-paper-stack').style.zoom, '1.5');
+    surfaces(w)[0].dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    await click(w, w.document.querySelector('[data-block-indent="1"]'));
+    assert.equal(server.doc.blocks[0].indent, 1);
+    assert.equal(w.document.querySelector('.doc-paper-stack').style.zoom, '1.5');
   });
 });

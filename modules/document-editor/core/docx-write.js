@@ -112,6 +112,11 @@
       out += '<w:spacing w:after="120"/>';
     }
 
+    if (block.lineHeight) {
+      const line = Math.round(Number(block.lineHeight) * 240);
+      if (out.includes('<w:spacing ')) out = out.replace('<w:spacing ', `<w:spacing w:line="${line}" w:lineRule="auto" `);
+      else out += `<w:spacing w:line="${line}" w:lineRule="auto"/>`;
+    }
     if (block.indent) {
       out += `<w:ind w:left="${(Number(block.indent) * 360)}"/>`;
     }
@@ -136,6 +141,7 @@
 
   function textRun(text, props) {
     if (text == null || text === '') return '';
+    if (props && props.link && !props.color) props = Object.assign({}, props, { color: '0563C1', underline: props.underline === false ? false : true });
     const parts = String(text).split('\n');
     let out = '';
     parts.forEach((part, i) => {
@@ -146,7 +152,7 @@
     return out;
   }
 
-  function runsOf(block, blockProps) {
+  function runsOf(block, blockProps, ctx) {
     const base = {};
     if (blockProps.bold) base.bold = true;
     if (blockProps.italic) base.italic = true;
@@ -155,7 +161,19 @@
     if (blockProps.size) base.size = blockProps.size;
 
     if (Array.isArray(block.runs) && block.runs.length) {
-      return block.runs.map(run => textRun(run.text, Object.assign({}, base, run))).join('');
+      let out = '';
+      for (let i = 0; i < block.runs.length;) {
+        const link = block.runs[i].link;
+        let j = i;
+        let chunk = '';
+        while (j < block.runs.length && block.runs[j].link === link) {
+          chunk += textRun(block.runs[j].text, Object.assign({}, base, block.runs[j]));
+          j++;
+        }
+        out += link && ctx && ctx.addLink ? `<w:hyperlink r:id="${ctx.addLink(link)}" w:history="1">${chunk}</w:hyperlink>` : chunk;
+        i = j;
+      }
+      return out;
     }
     return textRun(model.blockText(block), base);
   }
@@ -166,7 +184,7 @@
     if (block.type === 'pagebreak') {
       return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
     }
-    return `<w:p>${paraProps(block, ctx)}${runsOf(block, block)}</w:p>`;
+    return `<w:p>${paraProps(block, ctx)}${runsOf(block, block, ctx)}</w:p>`;
   }
 
   function emitList(block, ctx) {
@@ -184,7 +202,7 @@
   function emitTable(block, ctx) {
     const rows = block.rows || [];
     const cols = rows.reduce((max, r) => Math.max(max, r.length), 1);
-    const total = Math.round(((ctx.pageWidth - ctx.margin * 2) * PT_TO_TWIP) / cols);
+    const total = Math.round((ctx.contentWidth * PT_TO_TWIP) / cols);
     const grid = new Array(cols).fill(`<w:gridCol w:w="${total}"/>`).join('');
 
     const body = rows.map((row, r) => {
@@ -222,8 +240,8 @@
     if (!model.isSafeImageSrc(block.src)) return '';
     const media = ctx.addMedia(block.src);
     if (!media) return '';
-    const maxW = Math.round((ctx.pageWidth - ctx.margin * 2) * PT_TO_EMU);
-    const maxH = Math.round((ctx.pageHeight - ctx.margin * 2) * PT_TO_EMU);
+    const maxW = Math.round(ctx.contentWidth * PT_TO_EMU);
+    const maxH = Math.round(ctx.contentHeight * PT_TO_EMU);
     let cx = block.width ? Number(block.width) * PX_TO_EMU : maxW;
     let cy = block.height ? Number(block.height) * PX_TO_EMU : Math.round(maxH * 0.6);
     const scale = Math.min(1, maxW / cx, maxH / cy);
@@ -270,6 +288,12 @@
     ];
     if (ctx.hasLists) {
       overrides.push('<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>');
+    }
+    if (ctx.headerFooter && ctx.headerFooter.header) {
+      overrides.push('<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>');
+    }
+    if (ctx.headerFooter && ctx.headerFooter.footer) {
+      overrides.push('<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>');
     }
     return XML_HEAD + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
       defaults.join('') + overrides.join('') + '</Types>';
@@ -321,6 +345,15 @@
     }
     for (const m of ctx.media) {
       rels.push(`<Relationship Id="${m.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${m.target}"/>`);
+    }
+    for (const l of ctx.links || []) {
+      rels.push(`<Relationship Id="${l.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${X(l.url)}" TargetMode="External"/>`);
+    }
+    if (ctx.headerFooter && ctx.headerFooter.header) {
+      rels.push('<Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>');
+    }
+    if (ctx.headerFooter && ctx.headerFooter.footer) {
+      rels.push('<Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>');
     }
     return XML_HEAD +
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
@@ -374,6 +407,31 @@
 
   // ---------------------------------------------------------------- entrada
 
+  // Encabezado y pie: un parrafo de texto y, en el pie, el numero de pagina
+  // como campo PAGE (Word lo recalcula solo en cada hoja).
+  function hfParagraph(text, align) {
+    const jc = align && align !== 'left' ? `<w:jc w:val="${align}"/>` : '';
+    return `<w:p><w:pPr><w:spacing w:after="0"/>${jc}</w:pPr>` +
+      `<w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t xml:space="preserve">${X(text)}</w:t></w:r></w:p>`;
+  }
+
+  function pageNumberParagraph(align) {
+    const jc = align && align !== 'left' ? `<w:jc w:val="${align}"/>` : '';
+    return `<w:p><w:pPr><w:spacing w:after="0"/>${jc}</w:pPr>` +
+      '<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple></w:p>';
+  }
+
+  function headerFooterParts(page) {
+    const wrap = (tag, inner) => XML_HEAD + `<w:${tag} ${NS}>${inner}</w:${tag}>`;
+    const out = { header: null, footer: null };
+    if (page.header) out.header = wrap('hdr', hfParagraph(page.header, 'left'));
+    const foot = [];
+    if (page.footer) foot.push(hfParagraph(page.footer, 'left'));
+    if (page.pageNumbers) foot.push(pageNumberParagraph(page.pageNumbers));
+    if (foot.length) out.footer = wrap('ftr', foot.join(''));
+    return out;
+  }
+
   /**
    * docToDocxParts(doc, opts) -> { parts: [{name, data}], warnings: [] }
    * No devuelve bytes: el ZIP lo arma el llamador (core/zip.js), asi el
@@ -383,6 +441,7 @@
     const o = opts || {};
     const warnings = (o.warnings || []).slice();
     const page = Object.assign({}, model.PAGE.A4, doc.page || {});
+    const mg = model.margins(page);
     const media = [];
     const mediaByExt = Object.create(null);
 
@@ -390,6 +449,14 @@
       pageWidth: page.width,
       pageHeight: page.height,
       margin: page.margin,
+      contentWidth: Math.max(72, page.width - mg.left - mg.right),
+      contentHeight: Math.max(72, page.height - mg.top - mg.bottom),
+      links: [],
+      addLink(url) {
+        let e = this.links.find(l => l.url === url);
+        if (!e) { e = { rid: `rIdLink${this.links.length + 1}`, url }; this.links.push(e); }
+        return e.rid;
+      },
       media,
       mediaByExt,
       hasLists: (doc.blocks || []).some(b => b.type === 'list'),
@@ -430,11 +497,15 @@
       }
     }
 
+    const hf = headerFooterParts(page);
+    ctx.headerFooter = hf;
+    const tw = (pt) => Math.round(pt * PT_TO_TWIP);
     const sectPr =
       '<w:sectPr>' +
-      `<w:pgSz w:w="${Math.round(page.width * PT_TO_TWIP)}" w:h="${Math.round(page.height * PT_TO_TWIP)}"/>` +
-      `<w:pgMar w:top="${Math.round(page.margin * PT_TO_TWIP)}" w:right="${Math.round(page.margin * PT_TO_TWIP)}" ` +
-      `w:bottom="${Math.round(page.margin * PT_TO_TWIP)}" w:left="${Math.round(page.margin * PT_TO_TWIP)}" ` +
+      (hf.header ? '<w:headerReference w:type="default" r:id="rIdHeader1"/>' : '') +
+      (hf.footer ? '<w:footerReference w:type="default" r:id="rIdFooter1"/>' : '') +
+      `<w:pgSz w:w="${tw(page.width)}" w:h="${tw(page.height)}"${page.width > page.height ? ' w:orient="landscape"' : ''}/>` +
+      `<w:pgMar w:top="${tw(mg.top)}" w:right="${tw(mg.right)}" w:bottom="${tw(mg.bottom)}" w:left="${tw(mg.left)}" ` +
       'w:header="708" w:footer="708" w:gutter="0"/>' +
       '</w:sectPr>';
 
@@ -450,6 +521,8 @@
       { name: 'word/document.xml', data: document }
     ];
     if (ctx.hasLists) parts.push({ name: 'word/numbering.xml', data: numbering() });
+    if (hf.header) parts.push({ name: 'word/header1.xml', data: hf.header });
+    if (hf.footer) parts.push({ name: 'word/footer1.xml', data: hf.footer });
 
     for (const m of media) {
       parts.push({ name: `word/${m.target}`, data: m.bytes, binary: true });

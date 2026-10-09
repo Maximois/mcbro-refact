@@ -43,6 +43,7 @@
     let out = '';
     for (const run of runs) {
       let html = esc(run.text).replace(/\n/g, '<br>');
+      if (run.link && model.isSafeLink(run.link)) html = `<a href="${escAttr(run.link)}">${html}</a>`;
       if (run.bold === true) html = `<strong>${html}</strong>`;
       if (run.italic === true) html = `<em>${html}</em>`;
       if (run.underline === true) html = `<u>${html}</u>`;
@@ -69,6 +70,7 @@
     if (block.size) styles.push(`font-size:${Number(block.size) || 11}pt`);
     if (block.color) styles.push(`color:${escAttr(block.color)}`);
     if (block.indent) styles.push(`margin-left:${Number(block.indent) * 18}pt`);
+    if (block.lineHeight) styles.push(`line-height:${Number(block.lineHeight)}`);
     return styles.length ? ` style="${escAttr(styles.join(';'))}"` : '';
   }
 
@@ -118,8 +120,9 @@
 
   function stylesheet(doc) {
     const page = doc.page || model.PAGE.A4;
+    const m = model.margins(page);
     return `
-@page { size: ${page.width}pt ${page.height}pt; margin: ${page.margin}pt; }
+@page { size: ${page.width}pt ${page.height}pt; margin: ${m.top}pt ${m.right}pt ${m.bottom}pt ${m.left}pt; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -184,5 +187,29 @@ hr { border: 0; border-top: 0.5pt solid #ccc; margin: 12pt 0; }
     return s.trim();
   }
 
-  return { docToHtml, blockToHtml, runsToHtml, stylesheet, htmlToText, esc, escAttr };
+  /**
+   * Opciones de printToPDF para encabezado, pie y numeracion. Chromium dibuja
+   * las plantillas dentro del margen de @page; las clases pageNumber /
+   * totalPages las rellena el.
+   */
+  function pdfHeaderFooter(doc) {
+    const page = (doc && doc.page) || model.PAGE.A4;
+    const m = model.margins(page);
+    const has = !!(page.header || page.footer || page.pageNumbers);
+    if (!has) return { displayHeaderFooter: false, headerTemplate: '<span></span>', footerTemplate: '<span></span>' };
+    const box = (inner, align) =>
+      `<div style="font-size:9px;font-family:Calibri,Arial,sans-serif;color:#444;width:100%;` +
+      `padding:0 ${m.right}pt 0 ${m.left}pt;text-align:${align || 'left'};">${inner}</div>`;
+    const header = page.header ? box(esc(page.header), 'left') : '<span></span>';
+    const num = '<span class="pageNumber"></span>';
+    let footer = '<span></span>';
+    if (page.footer && page.pageNumbers) {
+      const side = page.pageNumbers === 'left' ? `${num} &nbsp; ${esc(page.footer)}` : `${esc(page.footer)} &nbsp; ${num}`;
+      footer = box(side, page.pageNumbers === 'center' ? 'center' : page.pageNumbers);
+    } else if (page.footer) footer = box(esc(page.footer), 'left');
+    else if (page.pageNumbers) footer = box(num, page.pageNumbers);
+    return { displayHeaderFooter: true, headerTemplate: header, footerTemplate: footer };
+  }
+
+  return { pdfHeaderFooter, docToHtml, blockToHtml, runsToHtml, stylesheet, htmlToText, esc, escAttr };
 });

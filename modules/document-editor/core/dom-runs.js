@@ -18,6 +18,7 @@
 
 (function (root, factory) {
   const mod = factory({
+    model: (typeof require === 'function' && typeof module === 'object') ? require('./model.js') : (root.MCDoc && root.MCDoc.model),
     runs: (typeof require === 'function' && typeof module === 'object') ? require('./runs.js') : (root.MCDoc && root.MCDoc.runs)
   });
   if (typeof module === 'object' && module.exports) module.exports = mod;
@@ -27,6 +28,7 @@
   }
 })(this, function (deps) {
   const runs = deps.runs;
+  const model = deps.model;
 
   // Tamanos de la escala <font size> y de las palabras clave de CSS, en puntos.
   const FONT_TAG_PT = { 1: 7.5, 2: 10, 3: 12, 4: 13.5, 5: 18, 6: 24, 7: 36 };
@@ -91,6 +93,10 @@
     if (tag === 'i' || tag === 'em') p.italic = true;
     if (tag === 'u' || tag === 'ins') p.underline = true;
     if (tag === 's' || tag === 'strike' || tag === 'del') p.strike = true;
+    if (tag === 'a') {
+      const href = String(el.getAttribute('href') || '').trim();
+      if (model.isSafeLink(href)) p.link = href;
+    }
     if (tag === 'font') {
       const color = parseColor(el.getAttribute('color'));
       if (color) p.color = color;

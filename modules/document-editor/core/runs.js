@@ -31,7 +31,7 @@
   const model = deps.model;
 
   const BOOL_KEYS = ['bold', 'italic', 'underline', 'strike'];
-  const VALUE_KEYS = ['color', 'highlight', 'font', 'size'];
+  const VALUE_KEYS = ['color', 'highlight', 'font', 'size', 'link'];
   const PROP_KEYS = BOOL_KEYS.concat(VALUE_KEYS);
 
   const present = (v) => v !== undefined && v !== null;

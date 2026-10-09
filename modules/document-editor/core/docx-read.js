@@ -65,6 +65,30 @@
     return out;
   }
 
+  // Encabezado/pie: texto de sus parrafos (sin el campo PAGE) y, si el campo
+  // PAGE esta, la alineacion del parrafo que lo lleva.
+  function headerFooterOf(entries, rels, rid) {
+    const target = rels && rels[rid];
+    if (!target) return null;
+    const name = 'word/' + String(target).replace(/^\.\.\//, '').replace(/^\//, '').replace(/^word\//, '');
+    const raw = entries[name];
+    if (!raw) return null;
+    let tree;
+    try { tree = xml.parse(zip.toStr(raw)); } catch { return null; }
+    const texts = [];
+    let pageAlign = null;
+    for (const p of xml.findAll(tree, 'p')) {
+      const hasPage = xml.findAll(p, 'fldSimple').some(f => /\bPAGE\b/.test(xml.attr(f, 'instr') || '')) ||
+        xml.findAll(p, 'instrText').some(i => /\bPAGE\b/.test(xml.textOf(i)));
+      const jc = xml.attr(xml.find(xml.find(p, 'pPr') || p, 'jc'), 'val');
+      const align = jc === 'center' || jc === 'right' ? jc : 'left';
+      if (hasPage) { pageAlign = pageAlign || align; continue; }
+      const t = xml.textOf(p).replace(/\s+/g, ' ').trim();
+      if (t) texts.push(t);
+    }
+    return { text: texts.join(' ').slice(0, 200), pageAlign };
+  }
+
   function dataUrl(target, entries) {
     if (!target) return null;
     const clean = target.replace(/^\.\.\//, '').replace(/^\//, '');
@@ -140,7 +164,7 @@
 
   function propsKey(p) {
     const flag = (v, c) => (v === true ? c : v === false ? '-' + c : '');
-    return [flag(p.bold, 'b'), flag(p.italic, 'i'), flag(p.underline, 'u'), p.strike ? 's' : '', p.color || '', p.highlight || '', p.font || '', p.size || ''].join('|');
+    return [flag(p.bold, 'b'), flag(p.italic, 'i'), flag(p.underline, 'u'), p.strike ? 's' : '', p.color || '', p.highlight || '', p.font || '', p.size || '', p.link || ''].join('|');
   }
 
   /**
@@ -172,8 +196,17 @@
           continue;
         }
         if (name === 'pPr' || name === 'sdtPr' || name === 'rPr' || name === 'tblPr' || name === 'trPr' || name === 'tcPr') continue;
+        if (name === 'hyperlink') {
+          const target = ctx.rels && ctx.rels[xml.attr(child, 'id')];
+          const prevLink = ctx.curLink;
+          if (target && model.isSafeLink(target)) ctx.curLink = String(target).trim();
+          walk(child);
+          ctx.curLink = prevLink;
+          continue;
+        }
         if (name === 'r') {
           const props = runPropsOf(child);
+          if (ctx.curLink) props.link = ctx.curLink;
           for (const piece of runTokens(child, ctx)) {
             if (piece.image) { runs.push({ image: piece.image }); current = null; continue; }
             push(piece.text, Object.assign({}, props, piece.props || {}));
@@ -296,6 +329,16 @@
       if (left > 0) info.indent = Math.max(1, Math.round(left / 720));
     }
 
+    const spacing = xml.find(pPr, 'spacing');
+    if (spacing) {
+      const line = parseInt(xml.attr(spacing, 'line') || '0', 10);
+      const rule = xml.attr(spacing, 'lineRule');
+      if (line > 0 && (!rule || rule === 'auto')) {
+        const lh = Math.round(line / 240 * 100) / 100;
+        if (lh >= 0.8 && lh <= 3) info.lineHeight = lh;
+      }
+    }
+
     const outline = xml.find(pPr, 'outlineLvl');
     if (outline) {
       const v = parseInt(xml.attr(outline, 'val'), 10);
@@ -345,12 +388,12 @@ const merged = texts.map(t => {
     const usable = merged.filter(m => m.text.length);
     if (!usable.length) return blocks;
 
-    const base = { align: info.align, indent: info.indent };
+    const base = { align: info.align, indent: info.indent, lineHeight: info.lineHeight };
     const distinct = new Set(usable.map(propsKey));
     // Tachado, resaltado y fuente solo existen como formato de tramo: un
     // parrafo uniforme que los lleve tambien se guarda como runs.
     const first = usable[0];
-    const needsRuns = distinct.size > 1 || first.strike || first.highlight || first.font;
+    const needsRuns = distinct.size > 1 || first.strike || first.highlight || first.font || first.link;
     if (needsRuns) {
       blocks.push(Object.assign({}, base, {
         type: 'paragraph',
@@ -365,6 +408,13 @@ const merged = texts.map(t => {
           if (m.highlight) run.highlight = m.highlight;
           if (m.font) run.font = m.font;
           if (m.size) run.size = m.size;
+          if (m.link) {
+            run.link = m.link;
+            // El escritor pinta los enlaces de azul y subrayados; eso es
+            // presentacion del enlace, no una eleccion del autor.
+            if (String(run.color).toLowerCase() === '#0563c1') delete run.color;
+            if (run.underline === true) delete run.underline;
+          }
           return run;
         })
       }));
@@ -509,7 +559,7 @@ if (info.list) {
           // La tipografia del estilo se aplica como formato del bloque, no como
           // run: asi el modelo lo guarda y el exportador lo vuelve a escribir.
           const tp = typedProps(styleOf(info.styleHeading || info.style, ctx.styles));
-          const base2 = (info.align ? { align: info.align } : {});
+          const base2 = Object.assign(info.align ? { align: info.align } : {}, info.lineHeight ? { lineHeight: info.lineHeight } : {});
           if (kind) {
             if (kind.kind === 'hr') out.push({ type: 'hr' });
             else if (kind.kind === 'quote' && text) out.push(Object.assign({ type: 'quote', text }, tp, base2));
@@ -542,8 +592,20 @@ if (info.list) {
           }
           const pgMar = xml.find(child, 'pgMar');
           if (pgMar) {
-            const m = parseInt(xml.attr(pgMar, 'top') || '0', 10);
-            if (m > 0) o.margin = m / 20;
+            const side = (n) => { const v = parseInt(xml.attr(pgMar, n) || '', 10); return v >= 0 ? v / 20 : null; };
+            const top = side('top');
+            if (top != null && top > 0) o.margin = top;
+            o.marginTop = top; o.marginRight = side('right'); o.marginBottom = side('bottom'); o.marginLeft = side('left');
+          }
+          for (const ref of xml.childNodes(child, 'headerReference').concat(xml.childNodes(child, 'footerReference'))) {
+            if (xml.attr(ref, 'type') && xml.attr(ref, 'type') !== 'default') continue;
+            const part = headerFooterOf(entries, rels, xml.attr(ref, 'id'));
+            if (!part) continue;
+            if (ref.local === 'headerReference') { if (part.text) o.header = part.text; }
+            else {
+              if (part.text) o.footer = part.text;
+              if (part.pageAlign) o.pageNumbers = part.pageAlign;
+            }
           }
           continue;
         }
@@ -562,7 +624,11 @@ if (info.list) {
         created: meta.created, modified: meta.modified,
         source: 'docx', sourcePath: o.sourcePath || ''
       },
-      page: o.pageWidth ? { width: o.pageWidth, height: o.pageHeight, margin: o.margin } : undefined,
+      page: o.pageWidth ? {
+        width: o.pageWidth, height: o.pageHeight, margin: o.margin,
+        marginTop: o.marginTop, marginRight: o.marginRight, marginBottom: o.marginBottom, marginLeft: o.marginLeft,
+        header: o.header, footer: o.footer, pageNumbers: o.pageNumbers
+      } : undefined,
       blocks,
       warnings
     });

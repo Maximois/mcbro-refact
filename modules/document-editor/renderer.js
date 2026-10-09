@@ -25,6 +25,7 @@
   const runsLib = (window.MCDoc && window.MCDoc.runs) || null;
   const domRuns = (window.MCDoc && window.MCDoc.domRuns) || null;
   const tablesLib = (window.MCDoc && window.MCDoc.tables) || null;
+  const pageLib = (window.MCDoc && window.MCDoc.pagesetup) || null;
   const RUN_TYPES = ['paragraph', 'heading', 'quote'];
   const PANEL_ID = 'panel-doc';
   const HOST_ID = 'doc-host';
@@ -114,9 +115,21 @@
       (o.fields || []).forEach((f) => {
         const lab = document.createElement('label');
         lab.textContent = f.label || f.name;
-        const inp = document.createElement('input');
-        inp.type = 'text';
-        inp.value = f.value || '';
+        let inp;
+        if (f.options) {
+          inp = document.createElement('select');
+          f.options.forEach((op) => {
+            const opt = document.createElement('option');
+            opt.value = op[0];
+            opt.textContent = op[1];
+            inp.appendChild(opt);
+          });
+          inp.value = f.value || '';
+        } else {
+          inp = document.createElement('input');
+          inp.type = 'text';
+          inp.value = f.value || '';
+        }
         inputs[f.name] = inp;
         lab.appendChild(inp);
         box.appendChild(lab);
@@ -158,7 +171,7 @@
       h.appendChild(back);
       const first = Object.keys(inputs)[0];
       (first ? inputs[first] : okB).focus();
-      if (first) inputs[first].select();
+      if (first && inputs[first].select) inputs[first].select();
     });
   }
 
@@ -187,6 +200,8 @@
 '#' + HOST_ID + ' .doc-table-size{margin-top:6px;text-align:center;font-size:.8rem;opacity:.8;}',
 '.doc-b .doc-img-wrap{position:relative;display:inline-block;max-width:100%;margin:8px;line-height:0;}',
 '.doc-b .doc-img-wrap img.doc-img{margin:0;display:block;width:100%;height:auto;}',
+'.doc-paper{position:relative;}',
+'.doc-paper-hf{position:absolute;font-size:9pt;color:#555;white-space:pre;overflow:hidden;pointer-events:none;}',
 '.doc-b .doc-img-handle{display:none;position:absolute;right:-5px;bottom:-5px;width:12px;height:12px;background:var(--accent,#4da3ff);border:2px solid #fff;border-radius:3px;cursor:nwse-resize;}',
 '.doc-b.sel .doc-img-handle{display:block;}',
 '.doc-b.sel .doc-img-wrap{outline:2px solid var(--accent,#4da3ff);}',
@@ -243,7 +258,7 @@
 '#' + HOST_ID + ' .doc-modal-title{font-weight:600;margin-bottom:8px;}',
 '#' + HOST_ID + ' .doc-modal-msg{white-space:pre-line;opacity:.9;margin-bottom:10px;}',
 '#' + HOST_ID + ' .doc-modal label{display:block;font-size:.82rem;margin-bottom:8px;opacity:.9;}',
-'#' + HOST_ID + ' .doc-modal input{display:block;width:100%;margin-top:3px;height:30px;padding:3px 8px;background:var(--surface,#14161c);color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:5px;font:inherit;}',
+'#' + HOST_ID + ' .doc-modal select,#' + HOST_ID + ' .doc-modal input{display:block;width:100%;margin-top:3px;height:30px;padding:3px 8px;background:var(--surface,#14161c);color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:5px;font:inherit;}',
 '#' + HOST_ID + ' .doc-modal-row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;}',
 '.doc-b{position:relative;margin:0;max-width:none;color:#111;font-size:11pt;line-height:1.15;}',
 '.doc-b:hover{background:rgba(0,0,0,.025);}',
@@ -375,7 +390,16 @@
     '<div class="doc-format-group" aria-label="Insertar">',
       '<button class="doc-format-tool" id="doc-ins-table" data-always title="Insertar tabla">▦ Tabla</button>',
       '<button class="doc-format-tool" id="doc-ins-image" data-always title="Insertar imagen (también se puede pegar o arrastrar)">🖼 Imagen</button>',
+      '<button class="doc-format-tool" data-inline-only="link" title="Insertar o quitar enlace en el texto seleccionado" disabled>🔗 Enlace</button>',
+      '<button class="doc-format-tool" id="doc-page-setup" data-always title="Configurar página: papel, orientación, márgenes, encabezado y pie">📄 Página</button>',
+      '<select id="doc-zoom" data-always title="Zoom"><option value="50">50%</option><option value="75">75%</option>',
+        '<option value="100" selected>100%</option><option value="125">125%</option><option value="150">150%</option><option value="200">200%</option></select>',
       '<input type="file" id="doc-image-file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp" hidden></div>',
+    '<div class="doc-format-group" aria-label="Párrafo">',
+      '<select id="doc-lh" title="Interlineado"><option value="">Interlineado</option><option value="1">1,0</option>',
+        '<option value="1.15">1,15</option><option value="1.5">1,5</option><option value="2">2,0</option><option value="2.5">2,5</option></select>',
+      '<button class="doc-format-tool" data-block-indent="-1" title="Reducir sangría">⇤¶</button>',
+      '<button class="doc-format-tool" data-block-indent="1" title="Aumentar sangría">¶⇥</button></div>',
     '<div class="doc-format-group" aria-label="Listas">',
       '<button class="doc-format-tool" data-block-list="bullet" title="Viñetas">•</button>',
       '<button class="doc-format-tool" data-block-list="ordered" title="Numeración">1.</button>',
@@ -491,7 +515,8 @@ function ensureTab() {
     bar.querySelectorAll('button,select').forEach((control) => {
       const formatOnly = control.id === 'doc-style' || control.id === 'doc-size' ||
         control.hasAttribute('data-block-toggle') || control.hasAttribute('data-block-align') ||
-        control.hasAttribute('data-block-list') || control.id === 'doc-insert-pagebreak';
+        control.hasAttribute('data-block-list') || control.hasAttribute('data-block-indent') ||
+        control.id === 'doc-lh' || control.id === 'doc-insert-pagebreak';
       if (control.hasAttribute('data-always')) { control.disabled = !(ui.snap && ui.snap.open); return; }
       control.disabled = !block || (formatOnly && !supported);
     });
@@ -505,6 +530,8 @@ function ensureTab() {
       : ['paragraph', 'quote', 'code'].includes(block.type) ? block.type : 'paragraph';
     if (!supported) return;
     bar.querySelector('#doc-size').value = String(block.size || 11);
+    const lhSel = bar.querySelector('#doc-lh');
+    if (lhSel) lhSel.value = Array.from(lhSel.options).some((o) => Number(o.value) === Number(block.lineHeight) && o.value) ? String(Number(block.lineHeight)) : '';
     bar.querySelectorAll('[data-block-toggle]').forEach((button) => {
       button.classList.toggle('active', !!block[button.dataset.blockToggle]);
     });
@@ -559,7 +586,20 @@ function ensureTab() {
   function onFormatClick(event) {
     const button = event.target.closest('button');
     if (!button || button.disabled) return;
-    if (button.dataset.inlineOnly) {
+    if (button.id === 'doc-page-setup') {
+      openPageSetup();
+    } else if (button.dataset.blockIndent) {
+      const delta = Number(button.dataset.blockIndent);
+      applySelectedBlock((block) => {
+        const n = Math.min(8, Math.max(0, (Number(block.indent) || 0) + delta));
+        if (n === (Number(block.indent) || 0)) return null;
+        const next = Object.assign({}, block);
+        if (n) next.indent = n; else delete next.indent;
+        return next;
+      });
+    } else if (button.dataset.inlineOnly === 'link') {
+      linkAction();
+    } else if (button.dataset.inlineOnly) {
       applyInline(button.dataset.inlineOnly);
     } else if (button.dataset.blockToggle && ['bold', 'italic', 'underline'].includes(button.dataset.blockToggle) && activeCe()) {
       applyInline(button.dataset.blockToggle);
@@ -593,6 +633,86 @@ function ensureTab() {
     } else if (button.hasAttribute('data-block-delete')) {
       deleteSelectedBlock();
     }
+  }
+
+  // ── Pagina, enlaces y zoom (hito 3) ────────────────────────────────────
+  async function openPageSetup() {
+    if (!pageLib || !ui.snap || !ui.snap.open) return;
+    await flushPending();
+    const page = ui.snap.doc.page || {};
+    const paper = pageLib.paperOf(page);
+    const r = await modal({
+      title: 'Configurar página',
+      fields: [
+        { name: 'orientation', label: 'Orientación', value: pageLib.orientationOf(page),
+          options: [['portrait', 'Vertical'], ['landscape', 'Horizontal']] },
+        { name: 'paper', label: 'Papel', value: paper === 'custom' ? '' : paper,
+          options: [['', paper === 'custom' ? 'Personalizado (actual)' : 'Actual'], ['A4', 'A4'], ['LETTER', 'Carta'], ['LEGAL', 'Legal'], ['A5', 'A5']] },
+        { name: 'margin', label: 'Márgenes', value: '',
+          options: [['', 'Actuales'], ['normal', 'Normal (2 cm)'], ['narrow', 'Estrechos (1,3 cm)'], ['wide', 'Anchos (3 cm)']] },
+        { name: 'header', label: 'Encabezado', value: page.header || '' },
+        { name: 'footer', label: 'Pie de página', value: page.footer || '' },
+        { name: 'pageNumbers', label: 'Número de página', value: page.pageNumbers || 'none',
+          options: [['none', 'Sin números'], ['left', 'Izquierda'], ['center', 'Centro'], ['right', 'Derecha']] }
+      ],
+      ok: 'Aplicar'
+    });
+    if (!r) return;
+    const op = { op: 'page', header: r.header, footer: r.footer, pageNumbers: r.pageNumbers, orientation: r.orientation };
+    if (r.paper) op.paper = r.paper;
+    if (r.margin) op.margin = r.margin;
+    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [op] });
+    if (res && res.ok) { applySnapshot(res); scheduleAutoSave(); }
+    else if (res && res.error) toast(res.error, 'error');
+  }
+
+  function normalizeUrl(raw) {
+    const v = String(raw || '').trim();
+    if (!v) return '';
+    if (/^(https?:\/\/|mailto:)/i.test(v)) return v;
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'mailto:' + v;
+    if (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(v)) return 'https://' + v;
+    return v;
+  }
+
+  async function linkAction() {
+    const ce = activeCe();
+    if (!ce) { toast('Seleccioná el texto que querés convertir en enlace', 'error'); return; }
+    // Al abrir el dialogo el foco se va al campo: la seleccion se guarda ahora.
+    const sel = window.getSelection && window.getSelection();
+    const range = sel && sel.rangeCount && ce.contains(sel.getRangeAt(0).commonAncestorContainer)
+      ? sel.getRangeAt(0).cloneRange() : ui.savedRange;
+    const insideLink = !!(sel && sel.rangeCount && sel.anchorNode &&
+      (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement).closest('a'));
+    const r = await modal({
+      title: 'Enlace',
+      message: 'Dejá la dirección vacía para quitar el enlace.',
+      fields: [{ name: 'url', label: 'Dirección (https://… o correo)', value: insideLink ? (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement).closest('a').getAttribute('href') : '' }],
+      ok: 'Aplicar'
+    });
+    if (!r) return;
+    if (range) {
+      ui.savedRange = range; ui.savedCe = ce;
+      ce.focus({ preventScroll: true });
+      const cur = window.getSelection();
+      cur.removeAllRanges();
+      cur.addRange(range);
+    }
+    const url = normalizeUrl(r.url);
+    if (!url) { await applyInline('unlink'); return; }
+    if (!(window.MCDoc && window.MCDoc.model && window.MCDoc.model.isSafeLink(url))) {
+      toast('Solo se admiten enlaces http, https o mailto', 'error');
+      return;
+    }
+    await applyInline('link', url);
+  }
+
+  function applyZoom(pct) {
+    ui.zoom = Math.min(200, Math.max(25, Number(pct) || 100));
+    const stack = host() && host().querySelector('.doc-paper-stack');
+    if (stack) stack.style.zoom = ui.zoom === 100 ? '' : String(ui.zoom / 100);
+    const sel = el('doc-zoom');
+    if (sel) sel.value = String(ui.zoom);
   }
 
   // ── Tablas e imagenes (hito 2) ─────────────────────────────────────────
@@ -806,6 +926,19 @@ function ensureTab() {
     if (!h || !b0 || b0.dataset.objWired || !tablesLib) return;
     b0.dataset.objWired = '1';
     wirePicker();
+    el('doc-zoom').addEventListener('change', (e) => applyZoom(e.target.value));
+    el('doc-lh').addEventListener('change', (e) => {
+      const v = Number(e.target.value);
+      applySelectedBlock((block) => {
+        const next = Object.assign({}, block);
+        if (v > 0) next.lineHeight = v; else delete next.lineHeight;
+        return next;
+      });
+    });
+    // Un enlace dentro del texto editable no navega: se edita, no se sigue.
+    b0.addEventListener('click', (e) => {
+      if (e.target.closest && e.target.closest('.doc-ce a')) e.preventDefault();
+    });
 
     el('doc-ins-table').addEventListener('click', showPicker);
     const fileInput = el('doc-image-file');
@@ -1050,17 +1183,39 @@ function ensureTab() {
     const scale = 96 / 72;
     const width = Math.max(100, Number(page.width) || 595) * scale;
     const height = Math.max(100, Number(page.height) || 842) * scale;
-    const margin = Math.max(0, Number(page.margin) || 0) * scale;
+    const mm = (window.MCDoc && window.MCDoc.model && window.MCDoc.model.margins)
+      ? window.MCDoc.model.margins(page)
+      : { top: Number(page.margin) || 0, right: Number(page.margin) || 0, bottom: Number(page.margin) || 0, left: Number(page.margin) || 0 };
+    const m = { top: mm.top * scale, right: mm.right * scale, bottom: mm.bottom * scale, left: mm.left * scale };
     const paper = document.createElement('section');
     paper.className = 'doc-paper';
     paper.dataset.page = pageNumber;
     paper.style.width = width + 'px';
     paper.style.height = height + 'px';
-    paper.style.padding = margin + 'px';
+    paper.style.padding = m.top + 'px ' + m.right + 'px ' + m.bottom + 'px ' + m.left + 'px';
     const content = document.createElement('div');
     content.className = 'doc-paper-content';
-    content.style.height = Math.max(1, height - margin * 2 - 2) + 'px';
+    content.style.height = Math.max(1, height - m.top - m.bottom - 2) + 'px';
     paper.appendChild(content);
+    // Encabezado y pie van en el margen, como en Word; no entran en el flujo.
+    const hf = (cls, text, align, edge) => {
+      const d = document.createElement('div');
+      d.className = 'doc-paper-hf ' + cls;
+      d.style.left = m.left + 'px';
+      d.style.right = m.right + 'px';
+      d.style.textAlign = align || 'left';
+      d.style[edge] = Math.max(4, (edge === 'top' ? m.top : m.bottom) / 2 - 7) + 'px';
+      d.textContent = text;
+      paper.appendChild(d);
+    };
+    if (page.header) hf('head', page.header, 'left', 'top');
+    if (page.footer || page.pageNumbers) {
+      const num = page.pageNumbers ? String(pageNumber) : '';
+      if (page.footer && page.pageNumbers) {
+        hf('foot', page.pageNumbers === 'left' ? num + '   ' + page.footer : page.footer + '   ' + num,
+          page.pageNumbers === 'center' ? 'center' : page.pageNumbers, 'bottom');
+      } else hf('foot', page.footer || num, page.footer ? 'left' : page.pageNumbers, 'bottom');
+    }
     stack.appendChild(paper);
     return content;
   }
@@ -1187,6 +1342,7 @@ function ensureTab() {
     stack.className = 'doc-paper-stack';
     b0.replaceChildren(stack);
     layoutPaperPages(stack, blocks, nodes, snap.doc.page || { width: 595, height: 842, margin: 57 });
+    if (ui.zoom && ui.zoom !== 100) stack.style.zoom = String(ui.zoom / 100);
     if (ui.selectedBlockId) select(ui.selectedBlockId);
     else refreshFormatBar();
     restoreCaret(caret);
@@ -1835,6 +1991,8 @@ const h = host();
       case 'font': exec('fontName', value || 'inherit'); break;
       case 'size': applySizeInline(ce, Number(value)); break;
       case 'clear': exec('removeFormat'); break;
+      case 'link': exec('createLink', value); break;
+      case 'unlink': exec('unlink'); break;
       default: return;
     }
     // Lo escrito hasta ahora sale del DOM tal cual está y se confirma ya: así

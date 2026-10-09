@@ -78,6 +78,10 @@
   // comillas ni punto y coma: va a parar a un atributo style y a un DOCX).
   const FONT_RE = /^[\p{L}\p{N} ._-]{1,60}$/u;
   const HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
+  // Solo enlaces que un documento puede llevar sin riesgo: nada de javascript:
+  // ni data:. Sin espacios ni comillas, porque va a un atributo y a un DOCX.
+  const LINK_RE = /^(https?:\/\/|mailto:)[^\s"'<>]{1,2000}$/i;
+  const isSafeLink = (url) => LINK_RE.test(String(url == null ? '' : url).trim());
 
   /**
    * Un tramo con formato. bold/italic/underline/strike admiten `false`
@@ -96,6 +100,7 @@
     if (run.highlight && HEX_RE.test(String(run.highlight))) out.highlight = String(run.highlight);
     if (run.font && FONT_RE.test(String(run.font).trim())) out.font = String(run.font).trim();
     if (run.size != null) out.size = clampInt(run.size, 4, 96, null);
+    if (run.link && isSafeLink(run.link)) out.link = String(run.link).trim();
     return out;
   }
 
@@ -110,7 +115,7 @@
       underline: block.underline === true,
       strike: false
     };
-    const keys = ['bold', 'italic', 'underline', 'strike', 'color', 'highlight', 'font', 'size'];
+    const keys = ['bold', 'italic', 'underline', 'strike', 'color', 'highlight', 'font', 'size', 'link'];
     const out = [];
     for (const run of block.runs) {
       const next = Object.assign({}, run);
@@ -184,6 +189,10 @@
     if (raw.size != null) block.size = clampInt(raw.size, 4, 96, null);
     if (raw.page != null) block.page = clampInt(raw.page, 0, 100000, 0);
     if (raw.indent != null) block.indent = clampInt(raw.indent, 0, 8, 0);
+    if (raw.lineHeight != null) {
+      const lh = Math.round(Number(raw.lineHeight) * 100) / 100;
+      if (isFinite(lh)) block.lineHeight = Math.min(3, Math.max(0.8, lh));
+    }
 
     if (Array.isArray(block.runs) && block.runs.length) block.runs = compactBlockRuns(block);
 
@@ -201,6 +210,14 @@
     return /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml|bmp);base64,[A-Za-z0-9+/=\s]+$/i.test(s);
   }
 
+  /** Margenes efectivos en puntos de una pagina. */
+  function margins(page) {
+    const p = page || PAGE.A4;
+    const m = Number.isFinite(Number(p.margin)) ? Number(p.margin) : PAGE.A4.margin;
+    const pick = (v) => (v == null || !isFinite(Number(v)) ? m : Number(v));
+    return { top: pick(p.marginTop), right: pick(p.marginRight), bottom: pick(p.marginBottom), left: pick(p.marginLeft) };
+  }
+
   function normalizeDoc(raw) {
     const input = raw || {};
     const blocks = (Array.isArray(input.blocks) ? input.blocks : [])
@@ -211,6 +228,18 @@
     page.width = clampInt(page.width, 100, 5000, PAGE.A4.width);
     page.height = clampInt(page.height, 100, 5000, PAGE.A4.height);
     page.margin = clampInt(page.margin, 0, 300, PAGE.A4.margin);
+    // Margenes por lado: solo se guardan los que difieren del margen general.
+    for (const side of ['marginTop', 'marginRight', 'marginBottom', 'marginLeft']) {
+      if (page[side] == null) { delete page[side]; continue; }
+      const v = clampInt(page[side], 0, 300, null);
+      if (v == null || v === page.margin) delete page[side]; else page[side] = v;
+    }
+    // Encabezado y pie: texto simple. pageNumbers coloca "N" en el pie.
+    for (const k of ['header', 'footer']) {
+      const v = String(page[k] == null ? '' : page[k]).slice(0, 200);
+      if (v.trim()) page[k] = v; else delete page[k];
+    }
+    if (!['left', 'center', 'right'].includes(page.pageNumbers)) delete page.pageNumbers;
 
     const doc = {
       schema: SCHEMA,
@@ -384,7 +413,7 @@
   }
 
   return {
-    SCHEMA, PAGE, BLOCK_TYPES, ALIGNS,
+    SCHEMA, PAGE, BLOCK_TYPES, ALIGNS, margins, isSafeLink,
     createDoc, normalizeDoc, normalizeBlock, clone, withBlocks,
     hashDoc, blockText, withText, hasFormatting, isSafeImageSrc,
     plainText, toMarkdown, outline, stats, findBlocks, deriveTitle, genId, normalizeRun

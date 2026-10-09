@@ -25,6 +25,7 @@
   const mod = factory({
     model: (typeof require === 'function' && typeof module === 'object') ? require('./model.js') : (root.MCDoc && root.MCDoc.model),
     runs: (typeof require === 'function' && typeof module === 'object') ? require('./runs.js') : (root.MCDoc && root.MCDoc.runs),
+    pagesetup: (typeof require === 'function' && typeof module === 'object') ? require('./pagesetup.js') : (root.MCDoc && root.MCDoc.pagesetup),
     tables: (typeof require === 'function' && typeof module === 'object') ? require('./tables.js') : (root.MCDoc && root.MCDoc.tables)
   });
   if (typeof module === 'object' && module.exports) module.exports = mod;
@@ -36,12 +37,13 @@
   const model = deps.model;
   const runsLib = deps.runs;
   const tablesLib = deps.tables;
+  const pageLib = deps.pagesetup;
   const MAX_OPS = 200;
   const MAX_ANCHOR = 2000;
 
   const OP_KINDS = [
     'replace', 'insert', 'delete', 'style', 'replaceBlock', 'deleteBlock',
-    'setTitle', 'setMeta', 'find', 'table', 'image'
+    'setTitle', 'setMeta', 'find', 'table', 'image', 'page'
   ];
 
   /** Descripcion del formato, para incrustar en el prompt del asistente. */
@@ -54,12 +56,13 @@
     '  { "op":"insert",  "after":"ancla", "block":{"type":"paragraph","text":"..."} }   // o "before", o "index": 12',
     '  { "op":"insert",  "index":0, "block":{"type":"heading","level":1,"text":"Titulo"} }',
     '  { "op":"delete",  "find":"texto exacto", "all":false }',
-    '  { "op":"style",   "find":"texto", "bold":true, "italic":false, "underline":false, "align":"center", "size":14, "color":"#333333" }',
+    '  { "op":"style",   "find":"texto", "link":"https://...", "bold":true, "italic":false, "underline":false, "align":"center", "size":14, "color":"#333333" }',
     '  { "op":"replaceBlock", "id":"b12", "block":{"type":"paragraph","text":"..."} }',
     '  { "op":"deleteBlock", "id":"b12" }',
     '  { "op":"table", "id":"b5", "action":"addRow|deleteRow|addCol|deleteCol", "index":1, "where":"after" }   // index 0-based; where before|after',
     '  { "op":"table", "id":"b5", "action":"setHeader", "value":true }',
     '  { "op":"table", "id":"b5", "action":"setCell", "row":0, "col":1, "text":"..." }',
+    '  { "op":"page", "orientation":"portrait|landscape", "paper":"A4|LETTER|LEGAL|A5", "margin":"normal|narrow|wide|none" | 56, "marginTop":40, "header":"texto", "footer":"texto", "pageNumbers":"left|center|right|none" }   // todo opcional; margenes en puntos',
     '  { "op":"image", "id":"b8", "width":320 }   // alto proporcional; tambien "height", "alt":"descripcion"',
     '  { "op":"setTitle", "title":"..." }   { "op":"setMeta", "key":"author", "value":"..." }',
     '  { "op":"find", "find":"texto" }   // solo consulta: devuelve donde aparece, no modifica',
@@ -345,12 +348,17 @@
       const v = op[key];
       if (v != null && String(v) !== '' && String(v) !== 'undefined') out[key] = v;
     }
+    if (op.link === false) out.link = null;
+    else if (op.link != null && String(op.link).trim() !== '') {
+      if (!model.isSafeLink(op.link)) throw new Error('link no valido: solo http, https o mailto');
+      out.link = String(op.link).trim();
+    }
     return Object.keys(out).length ? out : null;
   }
 
   function pickBlockProps(op) {
     const out = {};
-    for (const key of ['align', 'indent']) {
+    for (const key of ['align', 'indent', 'lineHeight']) {
       if (op[key] == null) continue;
       if (op[key] === false) out[key] = false;
       else out[key] = op[key];
@@ -454,6 +462,19 @@
     const before = describeTarget(cur);
     state.doc.blocks[at] = block;
     return { diffs: [{ op: 'image', index: at, id: op.id, before: before + ' ' + (cur.width || '?') + 'x' + (cur.height || '?'), after: describeTarget(block) + ' ' + block.width + 'x' + block.height }], count: 1 };
+  }
+
+  function opPage(state, op, index) {
+    const known = ['orientation', 'paper', 'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft', 'header', 'footer', 'pageNumbers'];
+    if (!known.some(k => op[k] !== undefined)) return err(index, 'INVALID', 'page sin cambios', { allowed: known });
+    const next = pageLib.apply(state.doc.page, op);
+    if (!next) return err(index, 'INVALID', 'page: valores invalidos o el area util quedaria demasiado chica');
+    const before = JSON.stringify(state.doc.page);
+    state.doc.page = Object.assign({}, state.doc.page, next);
+    for (const k of ['header', 'footer', 'pageNumbers', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft']) {
+      if (!(k in next)) delete state.doc.page[k];
+    }
+    return { diffs: [{ op: 'page', before, after: JSON.stringify(state.doc.page) }], count: 1 };
   }
 
   function opDeleteBlock(state, op, index) {
@@ -568,6 +589,7 @@
           case 'deleteBlock': res = opDeleteBlock(state, op, i); break;
           case 'table': res = opTable(state, op, i); break;
           case 'image': res = opImage(state, op, i); break;
+          case 'page': res = opPage(state, op, i); break;
           case 'setTitle': res = opSetTitle(state, op, i); break;
           case 'setMeta': res = opSetMeta(state, op, i); break;
           case 'find': res = opFind(state, op, i); break;

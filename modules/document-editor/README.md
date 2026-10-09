@@ -157,6 +157,20 @@ Operaciones de parche para la IA:
 ```
 Notas: `header:false` ahora se guarda explícito (antes un `false` se perdía y la primera fila volvía a ser encabezado). Al guardar como DOCX y reabrir, la primera fila se vuelve a leer como encabezado: es una limitación conocida de docx-read. Se corrigió además que `core/html.js` emitía las dimensiones de imagen sin `style=""`, por lo que el tamaño no llegaba al PDF/HTML.
 
+## Página, párrafo y enlaces
+
+UI: **📄 Página** (orientación, papel A4/Carta/Legal/A5, márgenes normal/estrecho/ancho, encabezado, pie y número de página), **Interlineado**, sangría ⇤¶ / ¶⇥, **🔗 Enlace** (sobre el texto seleccionado; vacío = quitar; solo http, https y mailto) y **zoom** 50–200 %. La hoja del editor dibuja márgenes por lado, encabezado, pie y número.
+
+Núcleo puro: `core/pagesetup.js` (`setOrientation`, `setPaper`, `setMargins`, `setHeaderFooter`, `apply`). Parche para la IA:
+```json
+{ "op":"page", "orientation":"landscape", "paper":"LETTER", "margin":"narrow" | 56, "marginTop":40,
+  "header":"texto", "footer":"texto", "pageNumbers":"left|center|right|none" }
+{ "op":"style", "find":"texto", "lineHeight":1.5, "indent":1, "link":"https://..." }   // link:false lo quita
+```
+Exportación: el DOCX escribe y lee márgenes por lado, orientación, encabezado/pie con campo PAGE, interlineado y enlaces (relaciones externas). El PDF ahora respeta el `@page` del documento (antes forzaba A4 con márgenes fijos) y pide encabezado/pie/numeración a Chromium (`core/html.js: pdfHeaderFooter`). **Verificar a mano en la app**: el PDF con encabezado y pie, porque `printToPDF` no se puede ejercitar en los tests.
+
+Diálogos: no se usan `confirm/prompt/alert` nativos (en Electron/Windows dejaban la página sin foco al cerrarse); hay un diálogo propio (`modal`), y borrar un bloque ofrece *Deshacer* en vez de preguntar.
+
 ## Seguridad
 
 - Solo se tocan archivos concedidos: los que el usuario eligió con un diálogo,

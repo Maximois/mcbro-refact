@@ -319,12 +319,13 @@ async function printToPdfBytes(doc) {
     // espera el PDF salia con los huecos de las imagenes vacios.
     await new Promise((r) => setTimeout(r, LIMITS.printDelayMs));
     const buf = await Promise.race([
-      win.webContents.printToPDF({
+      // Tamano, orientacion y margenes salen del @page del documento (core/html.js);
+      // antes se forzaba A4 con margenes fijos e ignoraba la configuracion.
+      win.webContents.printToPDF(Object.assign({
         printBackground: true,
-        pageSize: 'A4',
-        margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 },
-        preferCSSPageSize: false
-      }),
+        preferCSSPageSize: true,
+        margins: { top: 0, bottom: 0, left: 0, right: 0 }
+      }, html.pdfHeaderFooter(doc))),
       new Promise((_r, rej) => setTimeout(() => rej(new Error('La exportacion a PDF se paso de tiempo')), LIMITS.exportTimeoutMs))
     ]);
     return Buffer.from(buf);
