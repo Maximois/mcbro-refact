@@ -104,7 +104,7 @@
         const dims = [];
         if (block.width) dims.push(`width:${Number(block.width)}px`);
         if (block.height) dims.push(`height:${Number(block.height)}px`);
-        const attrs = dims.length ? ` ${dims.join(';')}` : '';
+        const attrs = dims.length ? ` style="${dims.join(';')}"` : '';
         return `<figure><img src="${escAttr(block.src)}" alt="${escAttr(block.alt || '')}"${attrs}>${block.alt ? `<figcaption>${esc(block.alt)}</figcaption>` : ''}</figure>`;
       }
       case 'pagebreak':

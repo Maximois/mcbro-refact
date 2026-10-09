@@ -24,6 +24,7 @@
   // Formato en linea: algebra de tramos y lector del DOM (core/runs.js, core/dom-runs.js).
   const runsLib = (window.MCDoc && window.MCDoc.runs) || null;
   const domRuns = (window.MCDoc && window.MCDoc.domRuns) || null;
+  const tablesLib = (window.MCDoc && window.MCDoc.tables) || null;
   const RUN_TYPES = ['paragraph', 'heading', 'quote'];
   const PANEL_ID = 'panel-doc';
   const HOST_ID = 'doc-host';
@@ -87,6 +88,23 @@
 '#' + HOST_ID + ' .doc-format-group:last-child{border:0;padding-right:0;}',
 '#' + HOST_ID + ' .doc-formatbar select{height:27px;padding:3px 6px;background:var(--surface2,#191c24);',
 'color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:4px;font:inherit;font-size:.82rem;}',
+'#' + HOST_ID + ' .doc-objbar{display:none;align-items:center;gap:6px;padding:5px 12px;border-bottom:1px solid var(--border,#2a2f3a);background:var(--surface,#14161c);flex-wrap:wrap;flex-shrink:0;font-size:.82rem;}',
+'#' + HOST_ID + ' .doc-objbar.on{display:flex;}',
+'#' + HOST_ID + ' .doc-objbar .doc-obj-label{opacity:.7;margin-right:4px;}',
+'#' + HOST_ID + ' .doc-objbar input[type=number],#' + HOST_ID + ' .doc-objbar input[type=text]{height:26px;padding:2px 6px;background:var(--surface2,#191c24);color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:4px;font:inherit;}',
+'#' + HOST_ID + ' .doc-objbar input[type=number]{width:70px;}',
+'#' + HOST_ID + ' .doc-objbar input[type=text]{width:220px;}',
+'#' + HOST_ID + ' .doc-table-picker{position:absolute;z-index:30;display:none;padding:8px;background:var(--surface2,#191c24);border:1px solid var(--border,#2a2f3a);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.4);}',
+'#' + HOST_ID + ' .doc-table-picker.on{display:block;}',
+'#' + HOST_ID + ' .doc-table-grid{display:grid;grid-template-columns:repeat(8,18px);gap:2px;}',
+'#' + HOST_ID + ' .doc-table-grid i{width:18px;height:18px;border:1px solid var(--border,#2a2f3a);border-radius:2px;display:block;cursor:pointer;}',
+'#' + HOST_ID + ' .doc-table-grid i.hot{background:rgba(77,163,255,.45);border-color:var(--accent,#4da3ff);}',
+'#' + HOST_ID + ' .doc-table-size{margin-top:6px;text-align:center;font-size:.8rem;opacity:.8;}',
+'.doc-b .doc-img-wrap{position:relative;display:inline-block;max-width:100%;margin:8px;line-height:0;}',
+'.doc-b .doc-img-wrap img.doc-img{margin:0;display:block;width:100%;height:auto;}',
+'.doc-b .doc-img-handle{display:none;position:absolute;right:-5px;bottom:-5px;width:12px;height:12px;background:var(--accent,#4da3ff);border:2px solid #fff;border-radius:3px;cursor:nwse-resize;}',
+'.doc-b.sel .doc-img-handle{display:block;}',
+'.doc-b.sel .doc-img-wrap{outline:2px solid var(--accent,#4da3ff);}',
 '#' + HOST_ID + ' .doc-format-tool{min-width:28px;height:27px;padding:2px 6px;background:transparent;',
 'color:inherit;border:1px solid transparent;border-radius:4px;cursor:pointer;font:inherit;}',
 '#' + HOST_ID + ' .doc-format-tool:hover:not(:disabled){background:var(--surface3,#22262f);}',
@@ -260,6 +278,10 @@
       '<button class="doc-format-tool" data-block-align="center" title="Centrar">↔</button>',
       '<button class="doc-format-tool" data-block-align="right" title="Alinear a la derecha">⇥</button>',
       '<button class="doc-format-tool" data-block-align="justify" title="Justificar">☰</button></div>',
+    '<div class="doc-format-group" aria-label="Insertar">',
+      '<button class="doc-format-tool" id="doc-ins-table" data-always title="Insertar tabla">▦ Tabla</button>',
+      '<button class="doc-format-tool" id="doc-ins-image" data-always title="Insertar imagen (también se puede pegar o arrastrar)">🖼 Imagen</button>',
+      '<input type="file" id="doc-image-file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp" hidden></div>',
     '<div class="doc-format-group" aria-label="Listas">',
       '<button class="doc-format-tool" data-block-list="bullet" title="Viñetas">•</button>',
       '<button class="doc-format-tool" data-block-list="ordered" title="Numeración">1.</button>',
@@ -268,6 +290,8 @@
       '<button class="doc-format-tool" data-block-move="down" title="Mover bloque abajo">↓</button>',
       '<button class="doc-format-tool" data-block-delete title="Eliminar bloque seleccionado">×</button></div>',
   '</div>',
+  '<div class="doc-objbar" id="doc-objbar" aria-label="Herramientas del objeto seleccionado"></div>',
+'<div class="doc-table-picker" id="doc-table-picker"></div>',
 '<div id="doc-warn-host"></div>',
 '<div class="doc-scroll" id="doc-scroll"><div id="doc-body"></div></div>',
 '<div class="doc-toast" id="doc-toast"></div>'].join('\n');
@@ -374,6 +398,7 @@ function ensureTab() {
       const formatOnly = control.id === 'doc-style' || control.id === 'doc-size' ||
         control.hasAttribute('data-block-toggle') || control.hasAttribute('data-block-align') ||
         control.hasAttribute('data-block-list') || control.id === 'doc-insert-pagebreak';
+      if (control.hasAttribute('data-always')) { control.disabled = !(ui.snap && ui.snap.open); return; }
       control.disabled = !block || (formatOnly && !supported);
     });
     if (!block) return;
@@ -399,6 +424,7 @@ function ensureTab() {
 
   function refreshFormatBar() {
     refreshBlockFormatBar();
+    refreshObjectBar();
     refreshInlineState();
   }
 
@@ -473,6 +499,300 @@ function ensureTab() {
     } else if (button.hasAttribute('data-block-delete')) {
       deleteSelectedBlock();
     }
+  }
+
+  // ── Tablas e imagenes (hito 2) ─────────────────────────────────────────
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp'];
+  const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+  const PICKER_COLS = 8;
+  const PICKER_ROWS = 6;
+
+  function contentWidthPx() {
+    const page = (ui.snap && ui.snap.doc && ui.snap.doc.page) || {};
+    const w = Number(page.width) || 595;
+    const m = Number(page.margin);
+    return Math.round((w - 2 * (Number.isFinite(m) ? m : 57)) * 96 / 72);
+  }
+
+  function refreshObjectBar() {
+    const bar = el('doc-objbar');
+    if (!bar || !tablesLib) return;
+    const block = selectedBlock();
+    const kind = block && (block.type === 'table' || block.type === 'image') ? block.type : '';
+    if (bar.dataset.kind !== kind || bar.dataset.bid !== (block ? block.id : '')) {
+      bar.dataset.kind = kind;
+      bar.dataset.bid = block ? block.id : '';
+      if (kind === 'table') {
+        bar.innerHTML = '<span class="doc-obj-label">Tabla</span>' +
+          '<button class="doc-format-tool" data-tbl="addRowBefore" title="Insertar fila arriba">+ Fila ↑</button>' +
+          '<button class="doc-format-tool" data-tbl="addRowAfter" title="Insertar fila abajo">+ Fila ↓</button>' +
+          '<button class="doc-format-tool" data-tbl="deleteRow" title="Eliminar la fila actual">− Fila</button>' +
+          '<button class="doc-format-tool" data-tbl="addColBefore" title="Insertar columna a la izquierda">+ Col ←</button>' +
+          '<button class="doc-format-tool" data-tbl="addColAfter" title="Insertar columna a la derecha">+ Col →</button>' +
+          '<button class="doc-format-tool" data-tbl="deleteCol" title="Eliminar la columna actual">− Col</button>' +
+          '<button class="doc-format-tool" data-tbl="header" title="Primera fila como encabezado">Encabezado</button>';
+      } else if (kind === 'image') {
+        bar.innerHTML = '<span class="doc-obj-label">Imagen</span>' +
+          '<label>Ancho <input type="number" id="doc-img-w" min="16" max="2000"> px</label>' +
+          '<button class="doc-format-tool" data-img-pct="25">25%</button>' +
+          '<button class="doc-format-tool" data-img-pct="50">50%</button>' +
+          '<button class="doc-format-tool" data-img-pct="75">75%</button>' +
+          '<button class="doc-format-tool" data-img-pct="100">100%</button>' +
+          '<label>Texto alternativo <input type="text" id="doc-img-alt" maxlength="300" placeholder="describe la imagen"></label>';
+      } else bar.innerHTML = '';
+    }
+    bar.classList.toggle('on', !!kind);
+    if (kind === 'table') {
+      const hb = bar.querySelector('[data-tbl="header"]');
+      if (hb) hb.classList.toggle('active', block.header !== false);
+    } else if (kind === 'image') {
+      const w = bar.querySelector('#doc-img-w');
+      const a = bar.querySelector('#doc-img-alt');
+      if (w && document.activeElement !== w) w.value = block.width || '';
+      if (a && document.activeElement !== a) a.value = block.alt || '';
+    }
+  }
+
+  function cellOf(block, c) {
+    const last = block ? Math.max(0, (block.rows || []).length - 1) : 0;
+    if (!c || !block || c.id !== block.id) return { row: last, col: Math.max(0, tablesLib.cols(block || { rows: [] }) - 1) };
+    return { row: Math.min(c.row, last), col: Math.min(c.col, Math.max(0, tablesLib.cols(block) - 1)) };
+  }
+
+  function tableAction(name) {
+    if (!tablesLib) return;
+    // La celda se toma ANTES de confirmar lo pendiente: al repintar el foco
+    // puede moverse y la fila nueva iria a otro lado.
+    const at = ui.cell ? Object.assign({}, ui.cell) : null;
+    applySelectedBlock((block) => {
+      if (block.type !== 'table') return null;
+      const c = cellOf(block, at);
+      let next = null;
+      if (name === 'addRowBefore') next = tablesLib.addRow(block, c.row, 'before');
+      else if (name === 'addRowAfter') next = tablesLib.addRow(block, c.row, 'after');
+      else if (name === 'deleteRow') next = tablesLib.deleteRow(block, c.row);
+      else if (name === 'addColBefore') next = tablesLib.addCol(block, c.col, 'before');
+      else if (name === 'addColAfter') next = tablesLib.addCol(block, c.col, 'after');
+      else if (name === 'deleteCol') next = tablesLib.deleteCol(block, c.col);
+      else if (name === 'header') next = tablesLib.setHeader(block, block.header === false);
+      if (!next) { toast('Esa operación no es posible en esta tabla', 'error'); return null; }
+      return next;
+    });
+  }
+
+  // Inserta un bloque despues del seleccionado (o al final) y lo selecciona.
+  async function insertBlockHere(block) {
+    if (!ui.snap || !ui.snap.open) return null;
+    await flushPending();
+    const blocks = ui.snap.doc.blocks || [];
+    const sel = selectedBlock();
+    const at = sel ? blocks.findIndex((b) => b.id === sel.id) + 1 : blocks.length;
+    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'insert', index: at, block }] });
+    if (res && res.ok) {
+      applySnapshot(res);
+      const created = ((res.doc && res.doc.blocks) || [])[at];
+      if (created) select(created.id);
+      scheduleAutoSave();
+      return created || null;
+    }
+    if (res && res.error) toast(res.error, 'error');
+    return null;
+  }
+
+  async function insertTable(rows, cols) {
+    if (!tablesLib) return;
+    const created = await insertBlockHere(tablesLib.create(rows, cols, true));
+    if (created) setTimeout(() => {
+      const t = host() && host().querySelector('.doc-b[data-id="' + cssEscape(created.id) + '"] textarea.doc-t');
+      if (t) t.focus();
+    }, 30);
+  }
+
+  function hidePicker() {
+    const p = el('doc-table-picker');
+    if (p) p.classList.remove('on');
+  }
+
+  function showPicker() {
+    const p = el('doc-table-picker');
+    const btn = el('doc-ins-table');
+    if (!p || !btn) return;
+    if (p.classList.contains('on')) { hidePicker(); return; }
+    let cells = '';
+    for (let i = 0; i < PICKER_COLS * PICKER_ROWS; i++) {
+      cells += '<i data-r="' + (Math.floor(i / PICKER_COLS) + 1) + '" data-c="' + ((i % PICKER_COLS) + 1) + '"></i>';
+    }
+    p.innerHTML = '<div class="doc-table-grid">' + cells + '</div><div class="doc-table-size">Elegí el tamaño</div>';
+    const hostEl = host();
+    const hr = hostEl.getBoundingClientRect();
+    const br = btn.getBoundingClientRect();
+    p.style.left = Math.max(0, br.left - hr.left) + 'px';
+    p.style.top = Math.max(0, br.bottom - hr.top + 4) + 'px';
+    p.classList.add('on');
+  }
+
+  function wirePicker() {
+    const p = el('doc-table-picker');
+    if (!p || p.dataset.wired) return;
+    p.dataset.wired = '1';
+    const paint = (r, c) => {
+      p.querySelectorAll('.doc-table-grid i').forEach((i) => {
+        i.classList.toggle('hot', Number(i.dataset.r) <= r && Number(i.dataset.c) <= c);
+      });
+      const label = p.querySelector('.doc-table-size');
+      if (label) label.textContent = r && c ? c + ' × ' + r : 'Elegí el tamaño';
+    };
+    p.addEventListener('mouseover', (e) => {
+      const i = e.target.closest && e.target.closest('i[data-r]');
+      if (i) paint(Number(i.dataset.r), Number(i.dataset.c));
+    });
+    p.addEventListener('click', (e) => {
+      const i = e.target.closest && e.target.closest('i[data-r]');
+      if (!i) return;
+      hidePicker();
+      insertTable(Number(i.dataset.r), Number(i.dataset.c));
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!p.classList.contains('on')) return;
+      if (e.target.closest && (e.target.closest('#doc-table-picker') || e.target.closest('#doc-ins-table'))) return;
+      hidePicker();
+    });
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(fr.error || new Error('no se pudo leer la imagen'));
+      fr.readAsDataURL(file);
+    });
+  }
+
+  // Tamano natural de la imagen. Si el navegador no la decodifica a tiempo se
+  // usa un tamano razonable: mejor insertarla que dejar al usuario esperando.
+  function naturalSize(src) {
+    return new Promise((resolve) => {
+      let done = false;
+      const fin = (v) => { if (!done) { done = true; resolve(v); } };
+      const img = new Image();
+      img.onload = () => fin({ width: img.naturalWidth || 400, height: img.naturalHeight || 300 });
+      img.onerror = () => fin({ width: 400, height: 300 });
+      setTimeout(() => fin({ width: 400, height: 300 }), 2500);
+      img.src = src;
+    });
+  }
+
+  async function insertImageFile(file) {
+    if (!file || !tablesLib) return;
+    if (!IMAGE_TYPES.includes(file.type)) { toast('Formato de imagen no admitido (PNG, JPG, GIF, WebP, SVG o BMP)', 'error'); return; }
+    if (file.size > MAX_IMAGE_BYTES) { toast('La imagen pesa más de 8 MB', 'error'); return; }
+    let src;
+    try { src = await readFileAsDataUrl(file); } catch (e) { toast('No se pudo leer la imagen', 'error'); return; }
+    const nat = await naturalSize(src);
+    const size = tablesLib.fitWidth(nat, contentWidthPx());
+    await insertBlockHere({ type: 'image', src, alt: '', width: size.width, height: size.height });
+  }
+
+  function imageFilesOf(dt) {
+    return dt && dt.files ? Array.from(dt.files).filter((f) => IMAGE_TYPES.includes(f.type)) : [];
+  }
+
+  async function setImageWidth(px) {
+    if (!tablesLib) return;
+    applySelectedBlock((block) => {
+      if (block.type !== 'image') return null;
+      const nat = block.width && block.height ? { width: block.width, height: block.height } : null;
+      return tablesLib.resizeImage(block, { width: px }, nat);
+    });
+  }
+
+  function wireObjects() {
+    const h = host();
+    const b0 = el('doc-body');
+    if (!h || !b0 || b0.dataset.objWired || !tablesLib) return;
+    b0.dataset.objWired = '1';
+    wirePicker();
+
+    el('doc-ins-table').addEventListener('click', showPicker);
+    const fileInput = el('doc-image-file');
+    el('doc-ins-image').addEventListener('click', () => { hidePicker(); fileInput.click(); });
+    fileInput.addEventListener('change', async () => {
+      const f = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (f) await insertImageFile(f);
+    });
+
+    // Celda actual: las filas y columnas se agregan/quitan relativas a ella.
+    b0.addEventListener('focusin', (e) => {
+      const ta = e.target.closest && e.target.closest('textarea[data-tr]');
+      if (!ta) return;
+      const bEl = ta.closest('.doc-b');
+      if (bEl) ui.cell = { id: bEl.dataset.id, row: Number(ta.dataset.tr), col: Number(ta.dataset.tc) };
+    });
+
+    const bar = el('doc-objbar');
+    bar.addEventListener('click', (e) => {
+      const t = e.target.closest && e.target.closest('button');
+      if (!t) return;
+      if (t.dataset.tbl) tableAction(t.dataset.tbl);
+      else if (t.dataset.imgPct) setImageWidth(Math.round(contentWidthPx() * Number(t.dataset.imgPct) / 100));
+    });
+    bar.addEventListener('change', (e) => {
+      if (e.target.id === 'doc-img-w') {
+        const v = Number(e.target.value);
+        if (v >= 16) setImageWidth(v);
+      } else if (e.target.id === 'doc-img-alt') {
+        const alt = e.target.value;
+        applySelectedBlock((block) => (block.type === 'image' ? tablesLib.setAlt(block, alt) : null));
+      }
+    });
+
+    // Pegar una imagen del portapapeles: va como bloque, no como texto.
+    b0.addEventListener('paste', (e) => {
+      const files = imageFilesOf(e.clipboardData);
+      if (!files.length) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      insertImageFile(files[0]);
+    }, true);
+    b0.addEventListener('dragover', (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
+    });
+    b0.addEventListener('drop', (e) => {
+      const files = imageFilesOf(e.dataTransfer);
+      if (!files.length) return;
+      e.preventDefault();
+      const bEl = e.target.closest && e.target.closest('.doc-b');
+      if (bEl) select(bEl.dataset.id);
+      insertImageFile(files[0]);
+    });
+
+    // Redimensionar arrastrando la esquina: proporcion siempre conservada.
+    b0.addEventListener('mousedown', (e) => {
+      const handle = e.target.closest && e.target.closest('[data-img-handle]');
+      if (!handle) return;
+      e.preventDefault();
+      const bEl = handle.closest('.doc-b');
+      const wrap = handle.closest('.doc-img-wrap');
+      const img = wrap && wrap.querySelector('img');
+      if (!bEl || !img) return;
+      const startX = e.clientX;
+      const startW = wrap.getBoundingClientRect().width || img.width || 100;
+      const maxW = contentWidthPx();
+      let width = startW;
+      const move = (ev) => {
+        width = Math.max(16, Math.min(maxW, startW + (ev.clientX - startX)));
+        wrap.style.width = Math.round(width) + 'px';
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        select(bEl.dataset.id);
+        setImageWidth(Math.round(width));
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
   }
 
   async function insertSelectedPageBreak() {
@@ -574,7 +894,7 @@ function ensureTab() {
       const rows = Array.isArray(b.rows) ? b.rows : [];
       let out = '<table>';
       rows.forEach((row, ri) => {
-        const tag = (b.header && ri === 0) ? 'th' : 'td';
+        const tag = (b.header !== false && ri === 0) ? 'th' : 'td';
         out += '<tr>';
         // Cada celda es un textarea propio: una tabla importada de Word era
         // texto fijo y no se podia editar ni una letra.
@@ -587,7 +907,9 @@ function ensureTab() {
       return out + '</table>';
     }
     if (b.type === 'image') {
-      return '<img class="doc-img" src="' + esc(b.src || '') + '" alt="' + esc(b.alt || '') + '">';
+      const w = Number(b.width) > 0 ? ' style="width:' + Number(b.width) + 'px"' : '';
+      return '<span class="doc-img-wrap"' + w + '><img class="doc-img" src="' + esc(b.src || '') + '" alt="' +
+        esc(b.alt || '') + '" draggable="false"><span class="doc-img-handle" data-img-handle></span></span>';
     }
     if (b.type === 'pagebreak' || b.type === 'hr') return '';
     // Parrafo, titulo, cita y codigo: superficie unica de texto.
@@ -1581,6 +1903,7 @@ const h = host();
       select(bEl ? bEl.dataset.id : null);
     });
     wireInlineFormatting();
+    wireObjects();
   }
 
   // ── Teclado ────────────────────────────────────────────────────────────

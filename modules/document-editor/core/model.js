@@ -149,7 +149,7 @@
         .map(row => (Array.isArray(row) ? row : [row]).map(cell => String(cell == null ? '' : cell)));
       if (!rows.length) return null;
       block.rows = rows;
-      if (raw.header !== false) block.header = true;
+      block.header = raw.header !== false;
     } else if (type === 'image') {
       const src = String(raw.src || '');
       if (!isSafeImageSrc(src)) return null;
