@@ -139,6 +139,24 @@ Límites actuales: el formato en línea solo existe en párrafos, títulos y cit
 bloque). La fuente `Calibri` no se guarda en los tramos porque es la que el
 escritor DOCX pone por defecto.
 
+## Tablas e imágenes
+
+UI (barra de formato, grupo *Insertar*):
+- **▦ Tabla**: selector de tamaño (hasta 8×6; el modelo admite 100 filas × 20 columnas). Se inserta tras el bloque seleccionado, o al final.
+- Con una tabla seleccionada aparece la barra de objeto: `+ Fila ↑/↓`, `− Fila`, `+ Col ←/→`, `− Col`, `Encabezado`. Las filas/columnas son relativas a la **celda con foco**; lo escrito y sin confirmar se guarda antes de operar.
+- **🖼 Imagen**: selector de archivo, pegar desde el portapapeles o arrastrar un archivo al documento. PNG/JPG/GIF/WebP/SVG/BMP, máx. 8 MB; se reduce para caber en el ancho de página. Con la imagen seleccionada: asa en la esquina (conserva proporción), ancho en px, atajos 25/50/75/100 % y texto alternativo.
+
+Núcleo puro: `core/tables.js` (`create`, `addRow`, `deleteRow`, `addCol`, `deleteCol`, `setHeader`, `setCell`, `resizeImage`, `fitWidth`, `setAlt`). Devuelven bloques nuevos o `null`.
+
+Operaciones de parche para la IA:
+```json
+{ "op":"table", "id":"b5", "action":"addRow|deleteRow|addCol|deleteCol", "index":1, "where":"before|after" }
+{ "op":"table", "id":"b5", "action":"setHeader", "value":true }
+{ "op":"table", "id":"b5", "action":"setCell", "row":0, "col":1, "text":"..." }
+{ "op":"image", "id":"b8", "width":320, "alt":"descripcion" }   // el otro lado sale de la proporción
+```
+Notas: `header:false` ahora se guarda explícito (antes un `false` se perdía y la primera fila volvía a ser encabezado). Al guardar como DOCX y reabrir, la primera fila se vuelve a leer como encabezado: es una limitación conocida de docx-read. Se corrigió además que `core/html.js` emitía las dimensiones de imagen sin `style=""`, por lo que el tamaño no llegaba al PDF/HTML.
+
 ## Seguridad
 
 - Solo se tocan archivos concedidos: los que el usuario eligió con un diálogo,

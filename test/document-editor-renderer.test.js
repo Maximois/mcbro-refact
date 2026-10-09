@@ -81,7 +81,7 @@ async function boot(blocks) {
   w.document.queryCommandValue = () => '';
 
   w.eval('var state = { tabs: [{ id: 1, url: "mc://doc", title: "Documento" }], activeTab: 1 };');
-  for (const f of ['model.js', 'html.js', 'runs.js', 'dom-runs.js']) w.eval(read('core', f));
+  for (const f of ['model.js', 'html.js', 'runs.js', 'dom-runs.js', 'tables.js']) w.eval(read('core', f));
   w.eval(read('renderer.js'));
   await tick();
   await w.DocEditor.open();
@@ -190,5 +190,145 @@ describe('renderer: formato en linea de punta a punta', () => {
     await key(w, surfaces(w)[1], 'Backspace');
     assert.equal(server.doc.blocks.length, 1);
     assert.equal(server.doc.blocks[0].type, 'heading');
+  });
+});
+
+const PNG_URI = 'data:image/png;base64,iVBORw0KGgo=';
+const plain = (v) => JSON.parse(JSON.stringify(v));
+const click = async (w, el) => { el.click(); await tick(60); };
+
+describe('renderer: tablas e imagenes (hito 2)', () => {
+  withDom('el selector de tamano inserta una tabla despues del bloque seleccionado', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', text: 'uno' }, { id: 'p2', type: 'paragraph', text: 'dos' }]);
+    surfaces(w)[0].focus();
+    await tick();
+    await click(w, w.document.querySelector('#doc-ins-table'));
+    const picker = w.document.querySelector('#doc-table-picker');
+    assert.ok(picker.classList.contains('on'));
+    await click(w, picker.querySelector('i[data-r="3"][data-c="4"]'));
+    const t = server.doc.blocks[1];
+    assert.equal(t.type, 'table');
+    assert.equal(t.rows.length, 3);
+    assert.equal(t.rows[0].length, 4);
+    assert.equal(server.doc.blocks[2].text, 'dos');
+    assert.ok(!picker.classList.contains('on'), 'el selector se cierra');
+  });
+
+  withDom('sin documento seleccionado la tabla va al final', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', text: 'uno' }]);
+    await click(w, w.document.querySelector('#doc-ins-table'));
+    await click(w, w.document.querySelector('#doc-table-picker i[data-r="2"][data-c="2"]'));
+    assert.equal(server.doc.blocks[1].type, 'table');
+  });
+
+  withDom('barra de tabla: agregar fila debajo de la celda actual, columna y borrar', async () => {
+    const { w, server } = await boot([{ id: 't', type: 'table', header: true, rows: [['a', 'b'], ['c', 'd']] }]);
+    const cell = w.document.querySelector('textarea[data-tr="0"][data-tc="1"]');
+    cell.focus();
+    await tick();
+    const bar = w.document.querySelector('#doc-objbar');
+    assert.ok(bar.classList.contains('on'));
+    await click(w, bar.querySelector('[data-tbl="addRowAfter"]'));
+    assert.deepEqual(plain(server.doc.blocks[0].rows), [['a', 'b'], ['', ''], ['c', 'd']]);
+    w.document.querySelector('textarea[data-tr="0"][data-tc="1"]').focus();
+    await tick();
+    await click(w, w.document.querySelector('#doc-objbar [data-tbl="addColBefore"]'));
+    assert.deepEqual(plain(server.doc.blocks[0].rows[0]), ['a', '', 'b']);
+    w.document.querySelector('textarea[data-tr="2"][data-tc="0"]').focus();
+    await tick();
+    await click(w, w.document.querySelector('#doc-objbar [data-tbl="deleteRow"]'));
+    assert.equal(server.doc.blocks[0].rows.length, 2);
+  });
+
+  withDom('un cambio de celda sin confirmar no se pierde al agregar una fila', async () => {
+    const { w, server } = await boot([{ id: 't', type: 'table', rows: [['a', 'b'], ['c', 'd']] }]);
+    const cell = w.document.querySelector('textarea[data-tr="1"][data-tc="0"]');
+    cell.focus();
+    cell.value = 'NUEVO';
+    cell.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await click(w, w.document.querySelector('#doc-objbar [data-tbl="addRowAfter"]'));
+    assert.deepEqual(plain(server.doc.blocks[0].rows), [['a', 'b'], ['NUEVO', 'd'], ['', '']]);
+  });
+
+  withDom('el boton Encabezado alterna la primera fila', async () => {
+    const { w, server } = await boot([{ id: 't', type: 'table', rows: [['a', 'b'], ['c', 'd']] }]);
+    w.document.querySelector('textarea[data-tr="0"][data-tc="0"]').focus();
+    await tick();
+    assert.equal(w.document.querySelectorAll('#doc-body th').length, 2);
+    await click(w, w.document.querySelector('#doc-objbar [data-tbl="header"]'));
+    assert.equal(server.doc.blocks[0].header, false);
+    assert.equal(w.document.querySelectorAll('#doc-body th').length, 0);
+  });
+
+  withDom('insertar imagen desde archivo: queda como bloque con tamano ajustado', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', text: 'uno' }]);
+    // jsdom no decodifica imagenes: se simula un tamano natural de 3000x1500.
+    w.Image = class { set src(v) { this.naturalWidth = 3000; this.naturalHeight = 1500; setTimeout(() => this.onload && this.onload(), 0); } };
+    const file = new w.File([Uint8Array.from([137, 80, 78, 71])], 'a.png', { type: 'image/png' });
+    const input = w.document.querySelector('#doc-image-file');
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    input.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await tick(200);
+    const img = server.doc.blocks[1];
+    assert.equal(img.type, 'image');
+    assert.match(img.src, /^data:image\/png;base64,/);
+    assert.ok(img.width <= 700 && img.width >= 600, 'cabe en la pagina: ' + img.width);
+    assert.equal(img.height * 2, img.width + (img.height * 2 - img.width), 'proporcion 2:1');
+    assert.ok(Math.abs(img.width / img.height - 2) < 0.02);
+  });
+
+  withDom('formatos no admitidos y archivos enormes se rechazan sin tocar el documento', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', text: 'uno' }]);
+    const input = w.document.querySelector('#doc-image-file');
+    Object.defineProperty(input, 'files', { value: [new w.File(['x'], 'a.exe', { type: 'application/x-msdownload' })], configurable: true });
+    input.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await tick(100);
+    assert.equal(server.doc.blocks.length, 1);
+  });
+
+  withDom('barra de imagen: preset de ancho y texto alternativo', async () => {
+    const { w, server } = await boot([{ id: 'i', type: 'image', src: PNG_URI, width: 400, height: 200 }]);
+    w.document.querySelector('.doc-b[data-type="image"] img').dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    const bar = w.document.querySelector('#doc-objbar');
+    assert.ok(bar.classList.contains('on'));
+    assert.equal(bar.querySelector('#doc-img-w').value, '400');
+    await click(w, bar.querySelector('[data-img-pct="50"]'));
+    const b = server.doc.blocks[0];
+    assert.equal(b.width, Math.round(((595 - 2 * 57) * 96 / 72) / 2));
+    assert.ok(Math.abs(b.width / b.height - 2) < 0.03);
+    const alt = w.document.querySelector('#doc-img-alt');
+    alt.value = 'logo';
+    alt.dispatchEvent(new w.Event('change', { bubbles: true }));
+    await tick(60);
+    assert.equal(server.doc.blocks[0].alt, 'logo');
+  });
+
+  withDom('arrastrar la esquina redimensiona conservando proporcion', async () => {
+    const { w, server } = await boot([{ id: 'i', type: 'image', src: PNG_URI, width: 400, height: 200 }]);
+    const wrap = w.document.querySelector('.doc-img-wrap');
+    wrap.getBoundingClientRect = () => ({ width: 400, height: 200, left: 0, top: 0, right: 400, bottom: 200 });
+    const handle = w.document.querySelector('[data-img-handle]');
+    handle.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: 400 }));
+    w.document.dispatchEvent(new w.MouseEvent('mousemove', { bubbles: true, clientX: 300 }));
+    w.document.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, clientX: 300 }));
+    await tick(80);
+    assert.equal(server.doc.blocks[0].width, 300);
+    assert.equal(server.doc.blocks[0].height, 150);
+  });
+
+  withDom('pegar una imagen del portapapeles crea un bloque (no pega texto)', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', text: 'uno' }]);
+    w.Image = class { set src(v) { this.naturalWidth = 100; this.naturalHeight = 50; setTimeout(() => this.onload && this.onload(), 0); } };
+    const ce = surfaces(w)[0];
+    ce.focus();
+    const ev = new w.Event('paste', { bubbles: true, cancelable: true });
+    ev.clipboardData = { files: [new w.File(['x'], 'p.png', { type: 'image/png' })], getData: () => '' };
+    ce.dispatchEvent(ev);
+    await tick(200);
+    assert.equal(ev.defaultPrevented, true);
+    assert.equal(server.doc.blocks[1].type, 'image');
+    assert.equal(server.doc.blocks[1].width, 100);
+    assert.equal(server.doc.blocks[1].height, 50);
   });
 });
