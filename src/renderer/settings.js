@@ -559,7 +559,7 @@ async function clearCache()   {
   else addSidebarLog('blocked', '[CACHE] no se pudo limpiar: ' + (result?.error || 'error desconocido'));
 }
 async function clearAll() {
-  if (!confirm('Borrar TODOS los datos (cookies, caché, storage, stats)?')) return;
+  if (!await mcDialog.confirm('Borrar TODOS los datos (cookies, caché, storage, stats)?', { ok: 'Borrar todo', danger: true })) return;
   const result = await mc.clearAll().catch(error => ({ ok: false, error: error?.message || 'error desconocido' }));
   if (!result?.ok) {
     addSidebarLog('blocked', '[CLEAR] no se pudieron borrar todos los datos: ' + (result?.error || 'error desconocido'));
