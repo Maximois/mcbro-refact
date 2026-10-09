@@ -4,7 +4,7 @@
   "description": "MC Browser — Privacy First Desktop Browser",
   "main": "main.js",
   "author": "MC Browser",
-  "license": "GPL-3.0",
+  "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
     "dev": "set MC_DEV=1 && electron .",
