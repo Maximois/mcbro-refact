@@ -68,13 +68,98 @@
     return (s.tabs || []).find((t) => t.url === TAB_URL) || null;
   }
 
-  function toast(msg, kind) {
+  function toast(msg, kind, action) {
     const t = el('doc-toast');
     if (!t) { console.log('[DocEditor]', msg); return; }
     t.textContent = msg;
-    t.className = 'doc-toast show' + (kind ? ' ' + kind : '');
+    if (action && action.label) {
+      const b = document.createElement('button');
+      b.className = 'doc-toast-action';
+      b.textContent = action.label;
+      b.addEventListener('click', () => { t.className = 'doc-toast'; action.run(); });
+      t.appendChild(b);
+    }
+    t.className = 'doc-toast show' + (kind ? ' ' + kind : '') + (action ? ' has-action' : '');
     clearTimeout(ui.toast);
-    ui.toast = setTimeout(() => { t.className = 'doc-toast'; }, kind === 'error' ? 6000 : 3000);
+    ui.toast = setTimeout(() => { t.className = 'doc-toast'; }, kind === 'error' ? 6000 : (action ? 8000 : 3000));
+  }
+
+  // Dialogo propio en el DOM. window.confirm/alert nativos dejan a Electron
+  // (Windows) sin foco de teclado en la pagina al cerrarse: no se podia volver
+  // a escribir en el documento. Y window.prompt ni existe en Electron.
+  // opts: { title, message, fields:[{name,label,value}], ok, cancel }
+  // Devuelve una promesa con { campo: valor } o null si se cancela.
+  function modal(opts) {
+    const h = host();
+    if (!h) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const o = opts || {};
+      const back = document.createElement('div');
+      back.className = 'doc-modal-back';
+      const box = document.createElement('div');
+      box.className = 'doc-modal';
+      box.setAttribute('role', 'dialog');
+      box.setAttribute('aria-modal', 'true');
+      const title = document.createElement('div');
+      title.className = 'doc-modal-title';
+      title.textContent = o.title || '';
+      box.appendChild(title);
+      if (o.message) {
+        const m = document.createElement('div');
+        m.className = 'doc-modal-msg';
+        m.textContent = o.message;
+        box.appendChild(m);
+      }
+      const inputs = {};
+      (o.fields || []).forEach((f) => {
+        const lab = document.createElement('label');
+        lab.textContent = f.label || f.name;
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = f.value || '';
+        inputs[f.name] = inp;
+        lab.appendChild(inp);
+        box.appendChild(lab);
+      });
+      const row = document.createElement('div');
+      row.className = 'doc-modal-row';
+      const okB = document.createElement('button');
+      okB.className = 'doc-btn primary';
+      okB.textContent = o.ok || 'Aceptar';
+      row.appendChild(okB);
+      let cancelB = null;
+      if (o.cancel !== false) {
+        cancelB = document.createElement('button');
+        cancelB.className = 'doc-btn';
+        cancelB.textContent = o.cancel || 'Cancelar';
+        row.insertBefore(cancelB, okB);
+      }
+      box.appendChild(row);
+      back.appendChild(box);
+      const prev = document.activeElement;
+      const close = (val) => {
+        back.remove();
+        try { if (prev && prev.focus && document.contains(prev)) prev.focus(); } catch (e) { /* sin foco previo */ }
+        resolve(val);
+      };
+      const done = () => {
+        const out = {};
+        Object.keys(inputs).forEach((k) => { out[k] = inputs[k].value; });
+        close(out);
+      };
+      okB.addEventListener('click', done);
+      if (cancelB) cancelB.addEventListener('click', () => close(null));
+      back.addEventListener('mousedown', (e) => { if (e.target === back && cancelB) close(null); });
+      box.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') { e.preventDefault(); close(cancelB ? null : {}); }
+        else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); done(); }
+      });
+      h.appendChild(back);
+      const first = Object.keys(inputs)[0];
+      (first ? inputs[first] : okB).focus();
+      if (first) inputs[first].select();
+    });
   }
 
   // ── Estilos ────────────────────────────────────────────────────────────
@@ -151,6 +236,15 @@
 'border-radius:8px;font-size:.85rem;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;max-width:80%;}',
 '#' + HOST_ID + ' .doc-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}',
 '#' + HOST_ID + ' .doc-toast.error{border-color:#d9534f;color:#ff8a85;}',
+'#' + HOST_ID + ' .doc-toast.has-action{pointer-events:auto;}',
+'#' + HOST_ID + ' .doc-toast-action{margin-left:12px;background:transparent;border:0;color:var(--accent,#4da3ff);cursor:pointer;font:inherit;font-weight:600;}',
+'#' + HOST_ID + ' .doc-modal-back{position:absolute;inset:0;z-index:50;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;}',
+'#' + HOST_ID + ' .doc-modal{min-width:320px;max-width:90%;background:var(--surface2,#191c24);border:1px solid var(--border,#2a2f3a);border-radius:10px;padding:16px 18px;box-shadow:0 10px 30px rgba(0,0,0,.5);}',
+'#' + HOST_ID + ' .doc-modal-title{font-weight:600;margin-bottom:8px;}',
+'#' + HOST_ID + ' .doc-modal-msg{white-space:pre-line;opacity:.9;margin-bottom:10px;}',
+'#' + HOST_ID + ' .doc-modal label{display:block;font-size:.82rem;margin-bottom:8px;opacity:.9;}',
+'#' + HOST_ID + ' .doc-modal input{display:block;width:100%;margin-top:3px;height:30px;padding:3px 8px;background:var(--surface,#14161c);color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:5px;font:inherit;}',
+'#' + HOST_ID + ' .doc-modal-row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;}',
 '.doc-b{position:relative;margin:0;max-width:none;color:#111;font-size:11pt;line-height:1.15;}',
 '.doc-b:hover{background:rgba(0,0,0,.025);}',
 '.doc-b.sel{background:rgba(0,120,215,.08);box-shadow:inset 2px 0 0 #0078d4;}',
@@ -833,12 +927,19 @@ function ensureTab() {
   async function deleteSelectedBlock() {
     const block = selectedBlock();
     if (!block || !ui.snap) return;
-    const label = blockText(block).trim().slice(0, 80) || block.type;
-    if (!window.confirm('¿Eliminar este bloque?\n\n' + label)) return;
     await flushPending();
+    const blocks = ui.snap.doc.blocks || [];
+    const at = blocks.findIndex((x) => x.id === block.id);
     const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'deleteBlock', id: block.id }] });
-    if (res && res.ok) applySnapshot(res);
-    else if (res && res.error) toast(res.error, 'error');
+    if (!(res && res.ok)) { if (res && res.error) toast(res.error, 'error'); return; }
+    // Sin confirmacion nativa: se borra y se ofrece Deshacer (como Word).
+    ui.selectedBlockId = null;
+    applySnapshot(res);
+    scheduleAutoSave();
+    const left = (res.doc && res.doc.blocks) || [];
+    const next = left[Math.min(at, left.length - 1)];
+    if (next) { select(next.id); setTimeout(() => focusBlock(next.id), 0); }
+    toast('Bloque eliminado', null, { label: 'Deshacer', run: () => travelHistory('undo') });
   }
 
   async function travelHistory(direction) {
@@ -850,16 +951,19 @@ function ensureTab() {
 
   async function findAndReplace() {
     await flushPending();
-    const find = window.prompt('Buscar texto en el documento:');
-    if (!find) return;
-    const replace = window.prompt('Reemplazar por:', '');
-    if (replace == null) return;
-    if (!window.confirm('Reemplazar todas las coincidencias de «' + find + '»?')) return;
+    const r = await modal({
+      title: 'Buscar y reemplazar',
+      fields: [{ name: 'find', label: 'Buscar' }, { name: 'replace', label: 'Reemplazar por' }],
+      ok: 'Reemplazar todo'
+    });
+    if (!r || !r.find) return;
     const res = await API.docEdit({ expectedHash: ui.snap?.doc?.hash, ops: [
-      { op: 'replace', find, replace, all: true, caseSensitive: false }
+      { op: 'replace', find: r.find, replace: r.replace || '', all: true, caseSensitive: false }
     ] });
-    if (res && res.ok) { applySnapshot(res); toast('Reemplazo aplicado en ' + res.applied + ' bloque(s)'); }
-    else if (res && res.error) toast(res.error, 'error');
+    if (res && res.ok) {
+      applySnapshot(res);
+      toast('Reemplazo aplicado en ' + res.applied + ' bloque(s)', null, { label: 'Deshacer', run: () => travelHistory('undo') });
+    } else if (res && res.error) toast(res.error, 'error');
   }
 
   async function showDocumentStats() {
@@ -868,9 +972,13 @@ function ensureTab() {
     if (res && res.error) { toast(res.error, 'error'); return; }
     const stats = res && res.stats;
     if (!stats) return;
-    window.alert('Palabras: ' + stats.words + '\nCaracteres: ' + stats.chars +
-      '\nBloques: ' + stats.blocks + '\nTítulos: ' + stats.headings +
-      '\nTablas: ' + stats.tables + '\nImágenes: ' + stats.images + '\nPáginas: ' + stats.pages);
+    await modal({
+      title: 'Recuento',
+      message: 'Palabras: ' + stats.words + '\nCaracteres: ' + stats.chars +
+        '\nBloques: ' + stats.blocks + '\nTítulos: ' + stats.headings +
+        '\nTablas: ' + stats.tables + '\nImágenes: ' + stats.images + '\nPáginas: ' + stats.pages,
+      cancel: false
+    });
   }
 
   // ── Contenido ──────────────────────────────────────────────────────────

@@ -332,3 +332,58 @@ describe('renderer: tablas e imagenes (hito 2)', () => {
     assert.equal(server.doc.blocks[1].height, 50);
   });
 });
+
+describe('renderer: sin dialogos nativos (borrar bloque dejaba la pagina sin foco)', () => {
+  const noNative = (w) => {
+    for (const k of ['confirm', 'prompt', 'alert']) w[k] = () => { throw new Error('dialogo nativo: ' + k); };
+  };
+
+  withDom('borrar un bloque no usa confirm, selecciona el vecino y se puede seguir escribiendo', async () => {
+    const { w, server } = await boot([
+      { id: 'a', type: 'paragraph', text: 'uno' }, { id: 'b', type: 'paragraph', text: 'dos' }, { id: 'c', type: 'paragraph', text: 'tres' }
+    ]);
+    noNative(w);
+    surfaces(w)[1].dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    await click(w, w.document.querySelector('[data-block-delete]'));
+    await tick(80);
+    assert.deepEqual(server.doc.blocks.map((b) => b.id), ['a', 'c']);
+    assert.ok(w.document.querySelector('.doc-b.sel'), 'queda un bloque seleccionado');
+    const ce = surfaces(w)[1];
+    assert.equal(w.document.activeElement, ce, 'el foco pasa al bloque vecino');
+    ce.lastChild.nodeValue += '!';
+    ce.dispatchEvent(new w.Event('input', { bubbles: true }));
+    ce.dispatchEvent(new w.FocusEvent('focusout', { bubbles: true }));
+    await tick(80);
+    assert.equal(server.doc.blocks[1].text, 'tres!');
+    assert.match(w.document.querySelector('#doc-toast').textContent, /eliminado/);
+    assert.ok(w.document.querySelector('.doc-toast-action'), 'ofrece Deshacer');
+  });
+
+  withDom('Buscar y reemplazar usa el dialogo propio', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'hola mundo' }]);
+    noNative(w);
+    await click(w, w.document.querySelector('#doc-find'));
+    const inputs = w.document.querySelectorAll('.doc-modal input');
+    assert.equal(inputs.length, 2);
+    assert.equal(w.document.activeElement, inputs[0]);
+    inputs[0].value = 'mundo';
+    inputs[1].value = 'cielo';
+    w.document.querySelector('.doc-modal .doc-btn.primary').click();
+    await tick(80);
+    assert.equal(server.doc.blocks[0].text, 'hola cielo');
+    assert.equal(w.document.querySelector('.doc-modal'), null);
+  });
+
+  withDom('Escape cancela el dialogo sin tocar el documento', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'hola' }]);
+    noNative(w);
+    await click(w, w.document.querySelector('#doc-find'));
+    const input = w.document.querySelector('.doc-modal input');
+    input.value = 'hola';
+    input.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick(40);
+    assert.equal(w.document.querySelector('.doc-modal'), null);
+    assert.equal(server.doc.blocks[0].text, 'hola');
+  });
+});
