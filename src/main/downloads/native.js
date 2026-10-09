@@ -205,7 +205,13 @@ function registerNativeDownloadIpc() {
   ipcMain.handle('dl-native-resume', (_e, id) => {
     const entry = nativeDlRegistry.get(id);
     if (!entry || entry.state !== 'paused') return { ok: false };
-    try { entry.item.resume(); entry.state = 'active'; return { ok: true }; } catch { return { ok: false }; }
+    try {
+      // item.resume() sin soporte de Range hace que Chromium REINICIE la
+      // descarga desde cero (el sintoma reportado). canResume() decide: si el
+      // servidor no puede reanudar, no relanzamos en silencio.
+      if (!entry.item.canResume()) return { ok: false, reason: 'no-resume-support' };
+      entry.item.resume(); entry.state = 'active'; return { ok: true };
+    } catch { return { ok: false, reason: 'error' }; }
   });
   ipcMain.handle('dl-native-cancel', (_e, id) => {
     const entry = nativeDlRegistry.get(id);

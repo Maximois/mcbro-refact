@@ -82,6 +82,21 @@ describe('downloads/native.js - el modulo', () => {
   });
 });
 
+describe('downloads/native.js - reanudar no reinicia en silencio', () => {
+  // item.resume() cuando el servidor no soporta Range (206) hace que Chromium
+  // relance la descarga desde cero. La compuerta canResume() evita ese reinicio
+  // silencioso: si no se puede reanudar, devuelve el motivo y nada toca al item.
+  test('canResume() decide antes de llamar a item.resume()', () => {
+    assert.match(codigo, /if \(!entry\.item\.canResume\(\)\) return \{ ok: false, reason: 'no-resume-support' \};/);
+    assert.ok(
+      codigo.indexOf('canResume()') > -1 &&
+      codigo.indexOf("entry.item.resume()") > -1 &&
+      codigo.indexOf('canResume()') < codigo.indexOf("entry.item.resume()"),
+      'la compuerta canResume() debe ir antes del resume()'
+    );
+  });
+});
+
 describe('downloads/native.js - el cableado en bootstrap.js', () => {
   test('las dos sesiones que capturan descargas lo llaman, cada una en su sitio', () => {
     // Principal desde bootstrap.js; la extra desde su modulo (paso 13). Se busca sin

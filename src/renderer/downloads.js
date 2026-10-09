@@ -548,7 +548,15 @@ function bindDownloadEvents() {
       pageUrl: item.dataset.page,
       partition: 'persist:mc'
     });
-    if (!result?.ok) return;
+    if (!result?.ok) {
+      if (action === 'resume' && result?.reason === 'no-resume-support') {
+        const meta = $('meta-'+id);
+        if (meta) meta.textContent = 'Servidor sin soporte de reanudar';
+        addSidebarLog('blocked', '[DL] No se puede reanudar: el servidor no soporta Range — use Reintentar');
+        setDlButtons(item, 'error');
+      }
+      return;
+    }
     const p = $('pct-' + id);
     if (action === 'pause') {
       item.dataset.state = 'paused'; setDlButtons(item, 'paused');
