@@ -86,6 +86,14 @@
 
   // -------------------------------------------------------------- runs
 
+  // w:highlight solo admite estos nombres de la paleta de Word.
+  const HIGHLIGHT_COLORS = {
+    yellow: '#FFFF00', green: '#00FF00', cyan: '#00FFFF', magenta: '#FF00FF', blue: '#0000FF',
+    red: '#FF0000', darkblue: '#000080', darkcyan: '#008080', darkgreen: '#008000',
+    darkmagenta: '#800080', darkred: '#800000', darkyellow: '#808000', darkgray: '#808080',
+    lightgray: '#C0C0C0', black: '#000000'
+  };
+
   function runPropsOf(run) {
     const rPr = xml.find(run, 'rPr');
     const props = {};
@@ -109,11 +117,30 @@
       const v = parseInt(xml.attr(sz, 'val'), 10);
       if (isFinite(v) && v > 0) props.size = Math.round((v / 2) * 10) / 10;
     }
+    const strike = xml.find(rPr, 'strike');
+    if (strike) props.strike = xml.attr(strike, 'val') !== '0' && xml.attr(strike, 'val') !== 'false';
+    // Resaltado: w:shd con relleno, o w:highlight (paleta fija de Word).
+    const shd = xml.find(rPr, 'shd');
+    const fill = shd && xml.attr(shd, 'fill');
+    if (fill && /^[0-9a-fA-F]{6}$/.test(fill)) props.highlight = `#${fill}`;
+    else {
+      const hl = xml.find(rPr, 'highlight');
+      const named = hl && HIGHLIGHT_COLORS[String(xml.attr(hl, 'val') || '').toLowerCase()];
+      if (named) props.highlight = named;
+    }
+    // Fuente: solo si el run la declara directamente (no la heredada del estilo).
+    const fonts = xml.find(rPr, 'rFonts');
+    const face = fonts && (xml.attr(fonts, 'ascii') || xml.attr(fonts, 'hAnsi'));
+    // Calibri es la fuente que el escritor pone por defecto en cada tramo (y la
+    // de Word): no es una eleccion del usuario y guardarla en todos los runs
+    // cambiaria el documento sin que nadie lo haya tocado.
+    if (face && !/^calibri$/i.test(face) && /^[\p{L}\p{N} ._-]{1,60}$/u.test(face)) props.font = face;
     return props;
   }
 
   function propsKey(p) {
-    return [p.bold ? 'b' : '', p.italic ? 'i' : '', p.underline ? 'u' : '', p.color || '', p.size || ''].join('|');
+    const flag = (v, c) => (v === true ? c : v === false ? '-' + c : '');
+    return [flag(p.bold, 'b'), flag(p.italic, 'i'), flag(p.underline, 'u'), p.strike ? 's' : '', p.color || '', p.highlight || '', p.font || '', p.size || ''].join('|');
   }
 
   /**
@@ -320,15 +347,23 @@ const merged = texts.map(t => {
 
     const base = { align: info.align, indent: info.indent };
     const distinct = new Set(usable.map(propsKey));
-    if (distinct.size > 1) {
+    // Tachado, resaltado y fuente solo existen como formato de tramo: un
+    // parrafo uniforme que los lleve tambien se guarda como runs.
+    const first = usable[0];
+    const needsRuns = distinct.size > 1 || first.strike || first.highlight || first.font;
+    if (needsRuns) {
       blocks.push(Object.assign({}, base, {
         type: 'paragraph',
         runs: usable.map(m => {
           const run = { text: m.text };
-          if (m.bold) run.bold = true;
-          if (m.italic) run.italic = true;
-          if (m.underline) run.underline = true;
+          for (const key of ['bold', 'italic', 'underline']) {
+            if (m[key] === true) run[key] = true;
+            else if (m[key] === false) run[key] = false;
+          }
+          if (m.strike) run.strike = true;
           if (m.color) run.color = m.color;
+          if (m.highlight) run.highlight = m.highlight;
+          if (m.font) run.font = m.font;
           if (m.size) run.size = m.size;
           return run;
         })

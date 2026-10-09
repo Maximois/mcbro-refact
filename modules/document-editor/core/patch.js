@@ -22,7 +22,10 @@
  */
 
 (function (root, factory) {
-  const mod = factory({ model: (typeof require === 'function' && typeof module === 'object') ? require('./model.js') : (root.MCDoc && root.MCDoc.model) });
+  const mod = factory({
+    model: (typeof require === 'function' && typeof module === 'object') ? require('./model.js') : (root.MCDoc && root.MCDoc.model),
+    runs: (typeof require === 'function' && typeof module === 'object') ? require('./runs.js') : (root.MCDoc && root.MCDoc.runs)
+  });
   if (typeof module === 'object' && module.exports) module.exports = mod;
   if (typeof window !== 'undefined') {
     window.MCDoc = window.MCDoc || {};
@@ -30,6 +33,7 @@
   }
 })(this, function (deps) {
   const model = deps.model;
+  const runsLib = deps.runs;
   const MAX_OPS = 200;
   const MAX_ANCHOR = 2000;
 
@@ -301,12 +305,19 @@
         if (simple && (block.type === 'heading' || block.type === 'paragraph' || block.type === 'quote' || block.type === 'code')) {
           const text = model.blockText(block);
           const spans = all ? allMatchesIn(text, anchor, op) : blockHits.map(h => ({ at: h.at, len: h.len }));
-          block.runs = runsWithProps(text, spans, runProps);
+          // Se aplica sobre los tramos que ya tiene el parrafo: antes se
+          // reconstruian desde el texto plano y se perdia el formato previo.
+          let runs = runsLib.ofBlock(block);
+          for (const span of spans.slice().sort((a, b) => a.at - b.at)) {
+            runs = runsLib.applyStyle(runs, span.at, span.at + span.len, runProps);
+          }
+          block.runs = runs.length ? runs : [{ text }];
           delete block.text;
         } else {
           // Listas y tablas no tienen runs: el estilo queda a nivel de bloque
           // o de celda, que es lo mejor que el modelo puede expresar.
           for (const key of Object.keys(runProps)) {
+            if (!['bold', 'italic', 'underline', 'color', 'size'].includes(key)) continue;
             if (runProps[key] === false) delete block[key];
             else block[key] = runProps[key];
           }
@@ -320,12 +331,13 @@
 
   function pickRunProps(op) {
     const out = {};
-    for (const key of ['bold', 'italic', 'underline', 'color', 'size']) {
+    for (const key of ['bold', 'italic', 'underline', 'strike']) {
       if (op[key] === true) out[key] = true;
       else if (op[key] === false) out[key] = false;
-      else if (key === 'color' || key === 'size') {
-        if (op[key] != null && String(op[key]) !== '' && String(op[key]) !== 'undefined') out[key] = op[key];
-      }
+    }
+    for (const key of ['color', 'highlight', 'font', 'size']) {
+      const v = op[key];
+      if (v != null && String(v) !== '' && String(v) !== 'undefined') out[key] = v;
     }
     return Object.keys(out).length ? out : null;
   }

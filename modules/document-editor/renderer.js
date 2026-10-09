@@ -21,6 +21,10 @@
   // render de Word (core/html.js): la vista edita sobre ese HTML, no sobre un
   // dibujo propio, para que pantalla, PDF y DOCX digan lo mismo.
   const html = (window.MCDoc && window.MCDoc.html) || null;
+  // Formato en linea: algebra de tramos y lector del DOM (core/runs.js, core/dom-runs.js).
+  const runsLib = (window.MCDoc && window.MCDoc.runs) || null;
+  const domRuns = (window.MCDoc && window.MCDoc.domRuns) || null;
+  const RUN_TYPES = ['paragraph', 'heading', 'quote'];
   const PANEL_ID = 'panel-doc';
   const HOST_ID = 'doc-host';
   const BTN_ID = 'doc-editor-btn';
@@ -88,6 +92,13 @@
 '#' + HOST_ID + ' .doc-format-tool:hover:not(:disabled){background:var(--surface3,#22262f);}',
 '#' + HOST_ID + ' .doc-format-tool.active{background:rgba(77,163,255,.2);border-color:var(--accent,#4da3ff);}',
 '#' + HOST_ID + ' .doc-format-tool:disabled,#' + HOST_ID + ' .doc-formatbar select:disabled{opacity:.4;cursor:default;}',
+'#' + HOST_ID + ' .doc-color-wrap{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:27px;border:1px solid var(--border,#2a2f3a);border-radius:5px;cursor:pointer;overflow:hidden;}',
+'#' + HOST_ID + ' .doc-color-wrap:hover{background:var(--surface3,#22262f);}',
+'#' + HOST_ID + ' .doc-color-wrap input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;}',
+'#' + HOST_ID + ' .doc-color-wrap:has(input:disabled){opacity:.4;cursor:default;}',
+'#' + HOST_ID + ' .doc-color-wrap:has(input:disabled) input{cursor:default;}',
+'#' + HOST_ID + ' .doc-color-a{font-weight:700;border-bottom:3px solid var(--doc-color-a,#d32f2f);line-height:1;padding:0 2px;}',
+'#' + HOST_ID + ' .doc-color-h{font-weight:600;background:var(--doc-color-h,#fff176);color:#222;padding:0 3px;border-radius:2px;line-height:1.2;}',
 '#' + HOST_ID + ' .doc-formatbar .doc-format-label{font-size:.72rem;color:var(--muted,#8b93a7);margin-right:3px;}',
 '#' + HOST_ID + ' .doc-title{font-size:1.15rem;font-weight:700;overflow:hidden;',
 'text-overflow:ellipsis;white-space:nowrap;max-width:46%;}',
@@ -226,14 +237,24 @@
         '<option value="heading-1">Título 1</option><option value="heading-2">Título 2</option>',
         '<option value="heading-3">Título 3</option><option value="quote">Cita</option>',
         '<option value="code">Código</option></select></div>',
+    '<div class="doc-format-group"><label class="doc-format-label" for="doc-font">Fuente</label>',
+      '<select id="doc-font" title="Fuente del texto seleccionado" disabled><option value="">Predeterminada</option>',
+        '<option value="Calibri">Calibri</option><option value="Arial">Arial</option>',
+        '<option value="Times New Roman">Times New Roman</option><option value="Georgia">Georgia</option>',
+        '<option value="Verdana">Verdana</option><option value="Segoe UI">Segoe UI</option>',
+        '<option value="Courier New">Courier New</option><option value="Consolas">Consolas</option></select></div>',
     '<div class="doc-format-group"><label class="doc-format-label" for="doc-size">Tamaño</label>',
-      '<select id="doc-size" title="Tamaño de fuente del bloque"><option value="11">11</option>',
+      '<select id="doc-size" title="Tamaño del texto seleccionado (o del bloque)"><option value="11">11</option>',
         '<option value="9">9</option><option value="10">10</option><option value="12">12</option>',
         '<option value="14">14</option><option value="16">16</option><option value="18">18</option>',
         '<option value="24">24</option><option value="36">36</option></select>',
-      '<button class="doc-format-tool" data-block-toggle="bold" title="Negrita del bloque"><b>B</b></button>',
-      '<button class="doc-format-tool" data-block-toggle="italic" title="Cursiva del bloque"><i>I</i></button>',
-      '<button class="doc-format-tool" data-block-toggle="underline" title="Subrayado del bloque"><u>U</u></button></div>',
+      '<button class="doc-format-tool" data-block-toggle="bold" title="Negrita (Ctrl+B)"><b>B</b></button>',
+      '<button class="doc-format-tool" data-block-toggle="italic" title="Cursiva (Ctrl+I)"><i>I</i></button>',
+      '<button class="doc-format-tool" data-block-toggle="underline" title="Subrayado (Ctrl+U)"><u>U</u></button>',
+      '<button class="doc-format-tool" data-inline-only="strike" title="Tachado" disabled><s>S</s></button>',
+      '<label class="doc-color-wrap" title="Color del texto"><span class="doc-color-a">A</span><input type="color" id="doc-color" value="#d32f2f" disabled></label>',
+      '<label class="doc-color-wrap" title="Resaltado"><span class="doc-color-h">ab</span><input type="color" id="doc-highlight" value="#ffeb3b" disabled></label>',
+      '<button class="doc-format-tool" data-inline-only="clear" title="Quitar el formato del texto seleccionado" disabled>Tx</button></div>',
     '<div class="doc-format-group" aria-label="Alineación">',
       '<button class="doc-format-tool" data-block-align="left" title="Alinear a la izquierda">⇤</button>',
       '<button class="doc-format-tool" data-block-align="center" title="Centrar">↔</button>',
@@ -270,6 +291,8 @@
       }
     });
     h.querySelector('#doc-size').addEventListener('change', (e) => {
+      const pt = Number(e.target.value);
+      if (pt > 0 && activeCe()) { applyInline('size', pt); return; }
       applySelectedBlock((block) => {
         const next = Object.assign({}, block);
         const size = Number(e.target.value);
@@ -341,7 +364,7 @@ function ensureTab() {
       : null;
   }
 
-  function refreshFormatBar() {
+  function refreshBlockFormatBar() {
     const h = host();
     const bar = h && h.querySelector('#doc-formatbar');
     if (!bar) return;
@@ -372,6 +395,11 @@ function ensureTab() {
     bar.querySelectorAll('[data-block-list]').forEach((button) => {
       button.classList.toggle('active', block.type === 'list' && block.ordered === (button.dataset.blockList === 'ordered'));
     });
+  }
+
+  function refreshFormatBar() {
+    refreshBlockFormatBar();
+    refreshInlineState();
   }
 
   async function applySelectedBlock(update) {
@@ -411,7 +439,11 @@ function ensureTab() {
   function onFormatClick(event) {
     const button = event.target.closest('button');
     if (!button || button.disabled) return;
-    if (button.dataset.blockToggle) {
+    if (button.dataset.inlineOnly) {
+      applyInline(button.dataset.inlineOnly);
+    } else if (button.dataset.blockToggle && ['bold', 'italic', 'underline'].includes(button.dataset.blockToggle) && activeCe()) {
+      applyInline(button.dataset.blockToggle);
+    } else if (button.dataset.blockToggle) {
       const key = button.dataset.blockToggle;
       applySelectedBlock((block) => {
         const next = Object.assign({}, block);
@@ -1052,10 +1084,12 @@ function ensureTab() {
     const isCe = ta.hasAttribute && ta.hasAttribute('data-ce');
     // Del contenteditable sale texto plano, no HTML: si se mandara el innerHTML
     // el modelo terminaria guardando etiquetas.
-    const text = isCe ? ceText(ta) : ta.value;
+    const runs = isCe && domRuns && runsLib ? domRuns.read(ta) : null;
+    const text = runs ? runsLib.toPlain(runs) : isCe ? ceText(ta) : ta.value;
     return {
       id: bEl.dataset.id,
       text: text,
+      runs: runs,
       itemIndex: ta.dataset.li == null ? null : Number(ta.dataset.li),
       cellRow: ta.dataset.tr == null ? null : Number(ta.dataset.tr),
       cellCol: ta.dataset.tc == null ? null : Number(ta.dataset.tc)
@@ -1072,10 +1106,23 @@ function ensureTab() {
       return null;
     }
     const range = sel.getRangeAt(0);
-    if (!node.contains(range.endContainer)) return null;
+    if (!node.contains(range.endContainer) || !node.contains(range.startContainer)) return null;
     const tail = document.createRange();
     tail.setStart(range.endContainer, range.endOffset);
     tail.setEnd(node, node.childNodes.length);
+    if (domRuns && runsLib) {
+      // Cada mitad conserva su formato. Lo seleccionado se descarta (Enter
+      // reemplaza la seleccion, como en Word): la izquierda llega hasta el
+      // INICIO de la seleccion y la derecha empieza en su FIN.
+      const head = document.createRange();
+      head.setStart(node, 0);
+      head.setEnd(range.startContainer, range.startOffset);
+      const restRuns = domRuns.read(tail.cloneContents());
+      const rest = runsLib.toPlain(restRuns);
+      if (!rest.length) return null;
+      const leftRuns = domRuns.read(head.cloneContents());
+      return { left: runsLib.toPlain(leftRuns), rest, leftRuns, restRuns };
+    }
     const rest = ceText(tail.cloneContents());
     if (!rest.length) return null;
     const full = ceText(node);
@@ -1102,10 +1149,10 @@ function ensureTab() {
     if (!pending) return Promise.resolve();
     const p = pending;
     pending = null;
-    return commit(p.id, p.text, p.itemIndex, p.cellRow, p.cellCol);
+    return commit(p.id, p.text, p.itemIndex, p.cellRow, p.cellCol, p.runs);
   }
 
-  async function commit(id, text, itemIndex, cellRow, cellCol) {
+  async function commit(id, text, itemIndex, cellRow, cellCol, runs) {
     const snap = ui.snap;
     if (!snap || !snap.open) return;
     // Cualquier confirmacion arranca el reloj del autoguardado.
@@ -1137,13 +1184,29 @@ function ensureTab() {
       else if (res && res.error) toast(res.error, 'error');
       return;
     }
+    if (Array.isArray(runs) && runsLib && RUN_TYPES.includes(block.type)) {
+      // El DOM es la verdad mientras se escribe: los tramos salen de lo que se
+      // ve (negritas, colores, fuentes...) y ya no se reproyectan por posicion,
+      // que perdia TODO el formato del parrafo al cambiar su longitud.
+      const clean = runsLib.compact(runs, runsLib.defaultsOf(block));
+      if (runsLib.equal(clean, runsLib.ofBlock(block))) return;
+      scheduleAutoSave();
+      const withRuns = Object.assign({}, block);
+      if (runsLib.hasFormatting(clean)) { withRuns.runs = clean; delete withRuns.text; }
+      else { withRuns.text = runsLib.toPlain(clean); delete withRuns.runs; }
+      const done = await API.docEdit({
+        expectedHash: snap.doc.hash,
+        ops: [{ op: 'replaceBlock', id, block: withRuns }]
+      });
+      if (done && done.ok) applySnapshot(done);
+      else if (done && done.error) toast(done.error, 'error');
+      return;
+    }
     if (blockText(block) === text) return;
     scheduleAutoSave();
     const next = Object.assign({}, block, { text });
-    // Si el bloque traia formato mixto (runs), escribir encima no puede
-    // borrarlo: se reproyecta el texto sobre los tramos existentes y solo se
-    // descarta el formato cuando el parrafo quedo de otra longitud, que es el
-    // unico caso donde las posiciones dejan de corresponderse.
+    // Superficies sin tramos (codigo, o sin el nucleo cargado): si el bloque
+    // traia formato mixto solo se conserva cuando el largo no cambio.
     if (Array.isArray(block.runs) && block.runs.length) {
       if (runsTotalLength(block.runs) === text.length) {
         next.runs = projectRuns(block.runs, text);
@@ -1176,7 +1239,9 @@ function ensureTab() {
     if (!snap || !snap.open) return;
     const blocks = (snap.doc && snap.doc.blocks) || [];
     const i = blocks.findIndex((b) => b.id === id);
-    const nuevo = con && con.text ? { type: 'paragraph', text: con.text } : { type: 'paragraph', text: '' };
+    const nuevo = con && con.runs && runsLib && runsLib.hasFormatting(con.runs)
+      ? { type: 'paragraph', runs: con.runs }
+      : con && con.text ? { type: 'paragraph', text: con.text } : { type: 'paragraph', text: '' };
     const res = await API.docEdit({
       expectedHash: snap.doc.hash,
       ops: [{ op: 'insert', index: i + 1, block: nuevo }]
@@ -1255,6 +1320,198 @@ const h = host();
       } catch {}
     }
 
+  // ── Formato en línea (sobre la selección) ────────────────────────────
+  // El DOM es la verdad mientras se escribe: el formato se aplica con
+  // execCommand (negrita, color, fuente...) sobre la selección real, y al
+  // confirmar el bloque core/dom-runs.js lo traduce a tramos del modelo.
+
+  function ceOf(node) {
+    const el = node && (node.nodeType === 1 ? node : node.parentElement);
+    const ce = el && el.closest && el.closest('.doc-ce');
+    const h = host();
+    return ce && h && h.contains(ce) ? ce : null;
+  }
+
+  function liveCe() {
+    const sel = window.getSelection && window.getSelection();
+    return sel && sel.rangeCount ? ceOf(sel.getRangeAt(0).startContainer) : null;
+  }
+
+  // La superficie de texto con la selección actual. Si el foco pasó a un
+  // control de la barra (fuente, tamaño, color) vale la selección guardada,
+  // siempre que siga siendo la del bloque seleccionado.
+  function activeCe() {
+    const live = liveCe();
+    if (live) return live;
+    const saved = ui.savedCe;
+    const h = host();
+    const selected = h && h.querySelector('.doc-b.sel');
+    return saved && saved.isConnected && ui.savedRange && selected && selected.contains(saved) ? saved : null;
+  }
+
+  function restoreSavedSelection() {
+    const ce = ui.savedCe;
+    const range = ui.savedRange;
+    if (!ce || !range || !ce.isConnected) return false;
+    ce.focus({ preventScroll: true });
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return true;
+  }
+
+  // execCommand('fontSize') solo conoce la escala 1-7: se pide el 7 y se
+  // cambia por el tamaño real en puntos.
+  function convertSizeMarkers(ce, pt) {
+    let changed = false;
+    ce.querySelectorAll('font[size="7"]').forEach((f) => {
+      const span = document.createElement('span');
+      span.style.fontSize = pt + 'pt';
+      while (f.firstChild) span.appendChild(f.firstChild);
+      f.replaceWith(span);
+      changed = true;
+    });
+    ce.querySelectorAll('span').forEach((sp) => {
+      if (sp.style.fontSize === 'xxx-large') { sp.style.fontSize = pt + 'pt'; changed = true; }
+    });
+    return changed;
+  }
+
+  function applySizeInline(ce, pt) {
+    if (!(pt > 0)) return;
+    try { document.execCommand('fontSize', false, '7'); } catch (e) { return; }
+    // Con el cursor sin selección todavía no hay nodo: se convierte al escribir.
+    ui.pendingSizePt = convertSizeMarkers(ce, pt) ? null : pt;
+  }
+
+  function fixPendingSize(ce) {
+    if (ui.pendingSizePt && convertSizeMarkers(ce, ui.pendingSizePt)) ui.pendingSizePt = null;
+  }
+
+  async function applyInline(action, value) {
+    const ce = activeCe();
+    if (!ce) return;
+    if (liveCe() !== ce && !restoreSavedSelection()) return;
+    ce.focus({ preventScroll: true });
+    const exec = (cmd, arg) => { try { return document.execCommand(cmd, false, arg); } catch (e) { return false; } };
+    exec('styleWithCSS', true);
+    switch (action) {
+      case 'bold': exec('bold'); break;
+      case 'italic': exec('italic'); break;
+      case 'underline': exec('underline'); break;
+      case 'strike': exec('strikeThrough'); break;
+      case 'color': exec('foreColor', value); break;
+      case 'highlight': exec('hiliteColor', value); break;
+      case 'font': exec('fontName', value || 'inherit'); break;
+      case 'size': applySizeInline(ce, Number(value)); break;
+      case 'clear': exec('removeFormat'); break;
+      default: return;
+    }
+    // Lo escrito hasta ahora sale del DOM tal cual está y se confirma ya: así
+    // el formato entra al historial (deshacer/rehacer) y al autoguardado.
+    const bEl = ce.closest('.doc-b');
+    if (bEl) pending = pendingFor(bEl, ce);
+    await flushPending();
+    refreshInlineState();
+  }
+
+  function refreshInlineState() {
+    const h = host();
+    const bar = h && h.querySelector('#doc-formatbar');
+    if (!bar) return;
+    const ce = activeCe();
+    bar.querySelectorAll('[data-inline-only], #doc-font, #doc-color, #doc-highlight').forEach((c) => {
+      c.disabled = !ce;
+    });
+    // Con el foco en un control de la barra no se lee nada: seria el estado
+    // de otra seleccion.
+    if (!ce || liveCe() !== ce) return;
+    const state = (cmd) => { try { return document.queryCommandState(cmd); } catch (e) { return false; } };
+    const value = (cmd) => { try { return String(document.queryCommandValue(cmd) || ''); } catch (e) { return ''; } };
+    const mark = (sel, on) => { const b = bar.querySelector(sel); if (b) b.classList.toggle('active', !!on); };
+    mark('[data-block-toggle="bold"]', state('bold'));
+    mark('[data-block-toggle="italic"]', state('italic'));
+    mark('[data-block-toggle="underline"]', state('underline'));
+    mark('[data-inline-only="strike"]', state('strikeThrough'));
+
+    const fontSel = bar.querySelector('#doc-font');
+    const family = value('fontName').split(',')[0].replace(/^["']|["']$/g, '').trim();
+    fontSel.value = Array.from(fontSel.options).some((o) => o.value === family) ? family : '';
+
+    const sel = window.getSelection();
+    const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+    const el = node && (node.nodeType === 1 ? node : node.parentElement);
+    const px = el ? parseFloat(window.getComputedStyle(el).fontSize) : NaN;
+    const pt = Math.round(px * 0.75 * 2) / 2;
+    const sizeSel = bar.querySelector('#doc-size');
+    if (isFinite(pt) && Array.from(sizeSel.options).some((o) => Number(o.value) === pt)) sizeSel.value = String(pt);
+
+    const paint = (id, cssVar, color) => {
+      const input = bar.querySelector(id);
+      if (input && color) { input.value = color; input.parentElement.style.setProperty(cssVar, color); }
+    };
+    paint('#doc-color', '--doc-color-a', domRuns && domRuns.parseColor(value('foreColor')));
+    paint('#doc-highlight', '--doc-color-h', domRuns && domRuns.parseColor(value('hiliteColor') || value('backColor')));
+  }
+
+  let inlineSelectionWired = false;
+  function wireInlineFormatting() {
+    const h = host();
+    const bar = h && h.querySelector('#doc-formatbar');
+    if (!bar || bar.dataset.inlineWired) return;
+    bar.dataset.inlineWired = '1';
+    // Los botones no deben quitarle el foco ni la selección al texto.
+    bar.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+    bar.querySelector('#doc-font').addEventListener('change', (e) => applyInline('font', e.target.value));
+    bar.querySelector('#doc-color').addEventListener('change', (e) => applyInline('color', e.target.value));
+    bar.querySelector('#doc-highlight').addEventListener('change', (e) => applyInline('highlight', e.target.value));
+    if (inlineSelectionWired) return;
+    inlineSelectionWired = true;
+    let frame = 0;
+    document.addEventListener('selectionchange', () => {
+      const sel = window.getSelection();
+      const ce = sel && sel.rangeCount ? ceOf(sel.getRangeAt(0).startContainer) : null;
+      if (!ce) return;
+      ui.savedCe = ce;
+      ui.savedRange = sel.getRangeAt(0).cloneRange();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(refreshInlineState);
+    });
+  }
+
+  // Backspace con el cursor al inicio de un párrafo: se une al anterior
+  // conservando el formato de los dos.
+  async function mergeRunsIntoPrevious(id) {
+    await flushPending();
+    const blocks = (ui.snap && ui.snap.doc && ui.snap.doc.blocks) || [];
+    const i = blocks.findIndex((b) => b.id === id);
+    const prev = blocks[i - 1];
+    const cur = blocks[i];
+    if (i < 1 || !prev || !cur || !RUN_TYPES.includes(prev.type) || !RUN_TYPES.includes(cur.type)) return;
+    const prevRuns = runsLib.ofBlock(prev);
+    const at = runsLib.length(prevRuns);
+    let ops;
+    let focusId;
+    if (at === 0) {
+      // El anterior está vacío: se descarta y el actual conserva su tipo.
+      ops = [{ op: 'deleteBlock', id: prev.id }];
+      focusId = cur.id;
+    } else {
+      const joined = runsLib.concat(prevRuns, runsLib.ofBlock(cur));
+      const next = Object.assign({}, prev);
+      if (runsLib.hasFormatting(joined)) { next.runs = joined; delete next.text; }
+      else { next.text = runsLib.toPlain(joined); delete next.runs; }
+      ops = [{ op: 'replaceBlock', id: prev.id, block: next }, { op: 'deleteBlock', id: cur.id }];
+      focusId = prev.id;
+    }
+    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops });
+    if (res && res.ok) {
+      applySnapshot(res);
+      const pos = focusId === prev.id ? at : 0;
+      setTimeout(() => restoreCaret({ id: focusId, start: pos, end: pos }), 30);
+    } else if (res && res.error) toast(res.error, 'error');
+  }
+
   // ── Fila flotante de bloque ────────────────────────────────────────────
   // ── Cableado de edición ────────────────────────────────────────────────
   function wireEditing() {
@@ -1276,6 +1533,7 @@ const h = host();
       const ta = e.target.closest && e.target.closest('.doc-t, .doc-ce');
       if (!ta) return;
       if (ta.classList.contains('doc-t')) autosize(ta);
+      else fixPendingSize(ta);
       const bEl = ta.closest('.doc-b');
       if (bEl) pending = pendingFor(bEl, ta);
     });
@@ -1322,6 +1580,7 @@ const h = host();
       const bEl = e.target.closest('.doc-b');
       select(bEl ? bEl.dataset.id : null);
     });
+    wireInlineFormatting();
   }
 
   // ── Teclado ────────────────────────────────────────────────────────────
@@ -1350,6 +1609,18 @@ const h = host();
     if (ce) {
       // En la superficie de texto, Enter divide el bloque en el punto del
       // cursor. Shift+Enter es el salto de linea dentro del parrafo.
+      if (e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && bEl && runsLib) {
+        const caret = captureCaret();
+        if (caret && !caret.ta && caret.start === 0 && caret.end === 0) {
+          const list = (ui.snap && ui.snap.doc && ui.snap.doc.blocks) || [];
+          const at = list.findIndex((x) => x.id === bEl.dataset.id);
+          if (at > 0 && RUN_TYPES.includes(list[at].type) && RUN_TYPES.includes(list[at - 1].type)) {
+            e.preventDefault();
+            await mergeRunsIntoPrevious(bEl.dataset.id);
+            return;
+          }
+        }
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const id = bEl && bEl.dataset.id;
@@ -1359,8 +1630,8 @@ const h = host();
           // El texto que queda arriba manda: lo que decia `pending` podia
           // incluir la cola que ahora se mueve al bloque nuevo.
           if (pending && pending.id === id) pending = null;
-          await commit(id, partes.left, null, null, null);
-          await insertAfter(id, { text: partes.rest });
+          await commit(id, partes.left, null, null, null, partes.leftRuns);
+          await insertAfter(id, { text: partes.rest, runs: partes.restRuns });
         } else {
           await flushPending();
           await insertAfter(id);
