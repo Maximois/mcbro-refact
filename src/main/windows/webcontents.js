@@ -158,28 +158,44 @@ function registerWebContentsListeners(deps = {}) {
         wc.executeJavaScript(`(() => {
           if (window.__mcNagDefuser) return;
           window.__mcNagDefuser = true;
+          var DIAG = typeof process !== 'undefined' && process.env && process.env.MC_NAG_DIAG === '1';
           var isPluginNag = function (el) {
             if (el.querySelector('img[src*="chp-ads-block-detector"]')) return true;
-            var headings = el.querySelectorAll('h1,h2,h3,h4,h5,h6');
-            var foundHeading = false;
-            for (var i = 0; i < headings.length; i++) {
-              if (/bloqueador de anuncios|ad blocker|ads blocked/i.test(headings[i].textContent || '')) { foundHeading = true; break; }
-            }
-            if (!foundHeading) return false;
-            return !!(el.querySelector('a[href*="toolkitspro"]') || el.querySelector('a[href*="chp-ads-block-detector"]'));
-          };
-          var sweep = function () {
-            var all = document.querySelectorAll('body *');
-            for (var i = 0; i < all.length; i++) {
-              if (isPluginNag(all[i])) { all[i].remove(); return true; }
+            if (el.querySelector('a[href*="toolkitspro"]')) {
+              var heads = el.querySelectorAll('h1,h2,h3,h4,h5,h6');
+              for (var i = 0; i < heads.length; i++) {
+                if (/bloqueador de anuncios|ad blocker|ads blocked/i.test(heads[i].textContent || '')) return true;
+              }
             }
             return false;
           };
-          if (!sweep()) {
-            var obs = new MutationObserver(function () { if (sweep()) obs.disconnect(); });
-            obs.observe(document.documentElement, { childList: true, subtree: true });
-            setTimeout(function () { obs.disconnect(); }, 15000);
-          }
+          var sweep = function () {
+            var removed = 0;
+            var all = document.querySelectorAll('body *');
+            for (var i = 0; i < all.length; i++) {
+              if (isPluginNag(all[i])) { all[i].remove(); removed++; }
+            }
+            if (DIAG && removed) console.log('[NAG-DIAG] removed', removed);
+            return removed;
+          };
+          if (DIAG) console.log('[NAG-DIAG] defuser-activo', location.href);
+          var found = false;
+          var interval = null;
+          var obs = new MutationObserver(function () {
+            if (sweep()) found = true;
+            if (found && interval) clearInterval(interval);
+          });
+          obs.observe(document.documentElement, { childList: true, subtree: true });
+          var stopAt = Date.now() + 120000;
+          interval = setInterval(function () {
+            if (Date.now() > stopAt) { clearInterval(interval); obs.disconnect(); return; }
+            if (sweep()) clearInterval(interval);
+            if (obs) { obs.disconnect(); obs = new MutationObserver(function () {
+              if (sweep()) found = true;
+              if (found && interval) clearInterval(interval);
+            }); obs.observe(document.documentElement, { childList: true, subtree: true }); }
+          }, 2000);
+          setTimeout(function () { if (obs) obs.disconnect(); }, 120000);
         })()`).catch(() => {});
         try {
           const host = new URL(wc.getURL()).hostname.toLowerCase();
