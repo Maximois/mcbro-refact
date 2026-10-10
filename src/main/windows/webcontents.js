@@ -155,6 +155,48 @@ function registerWebContentsListeners(deps = {}) {
             window.__mcCtxPos = { x: e.clientX, y: e.clientY, t: Date.now() };
           }, true);
         })()`).catch(() => {});
+        wc.executeJavaScript(`(() => {
+          if (window.__mcNagDefuser) return;
+          window.__mcNagDefuser = true;
+          var DIAG = typeof process !== 'undefined' && process.env && process.env.MC_NAG_DIAG === '1';
+          var isPluginNag = function (el) {
+            if (el.querySelector('img[src*="chp-ads-block-detector"]')) return true;
+            if (el.querySelector('a[href*="toolkitspro"]')) {
+              var heads = el.querySelectorAll('h1,h2,h3,h4,h5,h6');
+              for (var i = 0; i < heads.length; i++) {
+                if (/bloqueador de anuncios|ad blocker|ads blocked/i.test(heads[i].textContent || '')) return true;
+              }
+            }
+            return false;
+          };
+          var sweep = function () {
+            var removed = 0;
+            var all = document.querySelectorAll('body *');
+            for (var i = 0; i < all.length; i++) {
+              if (isPluginNag(all[i])) { all[i].remove(); removed++; }
+            }
+            if (DIAG && removed) console.log('[NAG-DIAG] removed', removed);
+            return removed;
+          };
+          if (DIAG) console.log('[NAG-DIAG] defuser-activo', location.href);
+          var found = false;
+          var interval = null;
+          var obs = new MutationObserver(function () {
+            if (sweep()) found = true;
+            if (found && interval) clearInterval(interval);
+          });
+          obs.observe(document.documentElement, { childList: true, subtree: true });
+          var stopAt = Date.now() + 120000;
+          interval = setInterval(function () {
+            if (Date.now() > stopAt) { clearInterval(interval); obs.disconnect(); return; }
+            if (sweep()) clearInterval(interval);
+            if (obs) { obs.disconnect(); obs = new MutationObserver(function () {
+              if (sweep()) found = true;
+              if (found && interval) clearInterval(interval);
+            }); obs.observe(document.documentElement, { childList: true, subtree: true }); }
+          }, 2000);
+          setTimeout(function () { if (obs) obs.disconnect(); }, 120000);
+        })()`).catch(() => {});
         try {
           const host = new URL(wc.getURL()).hostname.toLowerCase();
           if (host === 'monoschinos2.net' || host.endsWith('.monoschinos2.net')) {

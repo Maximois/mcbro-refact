@@ -243,8 +243,12 @@ function renderPersistedDownloads() {
 }
 function retryPersistedDownload(id) {
   const item = document.getElementById(id);
-  if (item?.dataset.native === 'true') dlNativeAction('retry', id);
-  else dlAction('retry', id);
+  if (!item) return;
+  if (item.dataset.native !== 'true') { dlAction('retry', id); return; }
+  // Interrumpida de una sesión anterior: reanudar NO debe reintentar desde cero
+  // (downloadURL de Chromium arranca de nuevo). Se continúa el .crdownload.
+  if (item.dataset.state === 'interrupted') dlNativeAction('resume', id);
+  else dlNativeAction('retry', id);
 }
 function pausePersistedDownload(id) {
   const item = document.getElementById(id);
@@ -535,12 +539,31 @@ function bindDownloadEvents() {
     trackDownload({ id, progress: d.pct, received: d.received, total: d.totalBytes });
   });
 
+  window.dlNativeFailText = (reason) => {
+    return {
+      'no-resume-support': 'Servidor sin soporte de reanudar (Range)',
+      'mediafire-remint-fail': 'No se pudo renovar el enlace de MediaFire',
+      'resume-http-error': 'Error HTTP al reanudar',
+      'no-partial': 'Archivo parcial no disponible',
+      'io-error': 'Error de disco al reanudar',
+      'busy': 'Ya hay una descarga en curso con ese nombre'
+    }[reason] || 'No se pudo reanudar';
+  };
+
   window.dlNativeAction = async (action, id) => {
     const item = document.getElementById(id);
     if (!item) return;
+    const pers = state.downloads.find(dd => dd.id === id) || {};
     let result;
     if (action === 'pause') result = await mc.dlNativePause(id);
-    else if (action === 'resume') result = await mc.dlNativeResume(id);
+    else if (action === 'resume') result = await mc.dlNativeResume(id, {
+      url: item.dataset.url,
+      filename: item.dataset.name,
+      pageUrl: item.dataset.page,
+      partition: 'persist:mc',
+      total: Number(pers.total) || 0,
+      received: Number(pers.received) || 0
+    });
     else if (action === 'cancel') result = await mc.dlNativeCancel(id);
     else result = await mc.dlNativeRetry(id, {
       url: item.dataset.url,
@@ -548,7 +571,16 @@ function bindDownloadEvents() {
       pageUrl: item.dataset.page,
       partition: 'persist:mc'
     });
-    if (!result?.ok) return;
+    if (!result?.ok) {
+      if (action === 'resume' && result?.reason) {
+        const meta = $('meta-'+id);
+        const text = window.dlNativeFailText(result.reason);
+        if (meta) meta.textContent = text;
+        addSidebarLog('blocked', '[DL] Reanudar: ' + text);
+        setDlButtons(item, 'error');
+      }
+      return;
+    }
     const p = $('pct-' + id);
     if (action === 'pause') {
       item.dataset.state = 'paused'; setDlButtons(item, 'paused');
@@ -571,6 +603,25 @@ function bindDownloadEvents() {
       setText('dl-count-badge', dlActive + ' activas');
     }
   };
+
+  mc.on('dl-native-range-fail', d => {
+    const item = document.getElementById(d.id);
+    if (!item) return;
+    const meta = $('meta-' + d.id);
+    const text = window.dlNativeFailText(d.reason);
+    if (meta) meta.textContent = text;
+    item.dataset.state = 'error';
+    setDlButtons(item, 'error');
+    addSidebarLog('blocked', '[DL] Reanudar: ' + text);
+  });
+
+  mc.on('dl-native-note', d => {
+    const item = document.getElementById(d.id);
+    if (!item || !d.text) return;
+    const meta = $('meta-' + d.id);
+    if (meta) meta.textContent = d.text;
+    addSidebarLog('info', '[DL] ' + d.text);
+  });
 
   mc.on('dl-native-done', d => {
     // Persistir en historial PRIMERO: renderPersistedDownloads() dibuja desde
@@ -623,6 +674,20 @@ function bindDownloadEvents() {
     const dot = $('dl-badge-dot'); if (dot) dot.style.display = dlActive > 0 ? 'block' : 'none';
     if (!d.cancelled) addSidebarLog('allowed', '[DL] Descarga nativa completada: ' + (d.filename || ''));
   });
+
+  // Descargas resumibles que viven en el estado del proceso main (persistido
+  // en disco): si no quedaron en el historial del renderer se muestran igual
+  // como interrumpidas, para que ofrezcan 'Reanudar'.
+  mc.dlNativeState().then(list => {
+    if (!Array.isArray(list) || !list.length) return;
+    let changed = false;
+    list.forEach(d => {
+      if (state.downloads.find(e => e.id === d.id)) return;
+      trackDownload({ ...d, ts: d.ts || Date.now() });
+      changed = true;
+    });
+    if (changed) renderPersistedDownloads();
+  }).catch(() => {});
 
 }
 

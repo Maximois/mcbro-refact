@@ -28,6 +28,9 @@ validate_renderer_syntax.js
 *.backup
 *.broken-backup
 
+# Parches locales de agentes (fuera de versionado)
+Claude edits/
+
 # Comparación temporal con asar portable
 .asar-compare/
 

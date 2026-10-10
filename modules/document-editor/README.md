@@ -235,3 +235,13 @@ patch de la IA) el overlay se descarta en la normalizacion. Se conserva en HTML,
 (ida y vuelta). Enter en un item inserta salto de linea; Enter en una celda crea un parrafo debajo.
 Limites: el pegado de listas/tablas con formato aun entra como texto plano, y la operacion
 `style` de la IA no aplica sobre items/celdas.
+
+## Hoja de ruta (hitos)
+
+- ☑ **Hito 1 — Formato en línea sobre la selección**: tramos (`runs.js`), lector del DOM (`dom-runs.js`), `style` del parche.
+- ☑ **Hito 2 — Tablas e imágenes**: `tables.js`, ops `table`/`image`, barra contextual, redimensionar.
+- ☑ **Hito 3 — Página**: papel, orientación, márgenes, encabezado/pie, numeración, interlineado, enlaces, zoom; exporta a DOCX y PDF.
+- ☑ **Hito 4 — Documento completo por la IA y estilos**: `insertBlocks`, `styles`, estilos del documento.
+- ☑ **Pegar con formato** desde Word/Docs/web (`paste.js`).
+- ☑ **Formato dentro de listas y celdas** (`itemRuns`/`cellRuns`).
+- ☐ Pendiente: pegar listas/tablas con formato dentro de items/celdas, `style` de la IA sobre items/celdas, PDF escaneados (OCR), tablas de PDF.
