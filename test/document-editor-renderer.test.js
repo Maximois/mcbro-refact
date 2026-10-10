@@ -240,18 +240,18 @@ describe('renderer: tablas e imagenes (hito 2)', () => {
 
   withDom('barra de tabla: agregar fila debajo de la celda actual, columna y borrar', async () => {
     const { w, server } = await boot([{ id: 't', type: 'table', header: true, rows: [['a', 'b'], ['c', 'd']] }]);
-    const cell = w.document.querySelector('textarea[data-tr="0"][data-tc="1"]');
+    const cell = w.document.querySelector('[data-tr="0"][data-tc="1"]');
     cell.focus();
     await tick();
     const bar = w.document.querySelector('#doc-objbar');
     assert.ok(bar.classList.contains('on'));
     await click(w, bar.querySelector('[data-tbl="addRowAfter"]'));
     assert.deepEqual(plain(server.doc.blocks[0].rows), [['a', 'b'], ['', ''], ['c', 'd']]);
-    w.document.querySelector('textarea[data-tr="0"][data-tc="1"]').focus();
+    w.document.querySelector('[data-tr="0"][data-tc="1"]').focus();
     await tick();
     await click(w, w.document.querySelector('#doc-objbar [data-tbl="addColBefore"]'));
     assert.deepEqual(plain(server.doc.blocks[0].rows[0]), ['a', '', 'b']);
-    w.document.querySelector('textarea[data-tr="2"][data-tc="0"]').focus();
+    w.document.querySelector('[data-tr="2"][data-tc="0"]').focus();
     await tick();
     await click(w, w.document.querySelector('#doc-objbar [data-tbl="deleteRow"]'));
     assert.equal(server.doc.blocks[0].rows.length, 2);
@@ -259,9 +259,9 @@ describe('renderer: tablas e imagenes (hito 2)', () => {
 
   withDom('un cambio de celda sin confirmar no se pierde al agregar una fila', async () => {
     const { w, server } = await boot([{ id: 't', type: 'table', rows: [['a', 'b'], ['c', 'd']] }]);
-    const cell = w.document.querySelector('textarea[data-tr="1"][data-tc="0"]');
+    const cell = w.document.querySelector('[data-tr="1"][data-tc="0"]');
     cell.focus();
-    cell.value = 'NUEVO';
+    cell.textContent = 'NUEVO';
     cell.dispatchEvent(new w.Event('input', { bubbles: true }));
     await click(w, w.document.querySelector('#doc-objbar [data-tbl="addRowAfter"]'));
     assert.deepEqual(plain(server.doc.blocks[0].rows), [['a', 'b'], ['NUEVO', 'd'], ['', '']]);
@@ -269,7 +269,7 @@ describe('renderer: tablas e imagenes (hito 2)', () => {
 
   withDom('el boton Encabezado alterna la primera fila', async () => {
     const { w, server } = await boot([{ id: 't', type: 'table', rows: [['a', 'b'], ['c', 'd']] }]);
-    w.document.querySelector('textarea[data-tr="0"][data-tc="0"]').focus();
+    w.document.querySelector('[data-tr="0"][data-tc="0"]').focus();
     await tick();
     assert.equal(w.document.querySelectorAll('#doc-body th').length, 2);
     await click(w, w.document.querySelector('#doc-objbar [data-tbl="header"]'));
@@ -581,5 +581,39 @@ describe('renderer: pegar con formato', () => {
     await tick(100);
     assert.equal(ev.defaultPrevented, true, 'lo maneja el pegado plano');
     assert.equal(server.doc.blocks[0].text, 'asolob');
+  });
+});
+
+describe('renderer: formato en items y celdas', () => {
+  withDom('negrita en una celda se guarda como cellRuns', async () => {
+    const { w, server } = await boot([{ id: 't', type: 'table', rows: [['Hola mundo', 'x']] }]);
+    const cell = w.document.querySelector('[data-tr="0"][data-tc="0"]');
+    select(w, cell, 5, 10);
+    w.document.querySelector('[data-block-toggle="bold"]').click();
+    await tick(60);
+    const b = server.doc.blocks[0];
+    assert.deepEqual(plain(b.rows), [['Hola mundo', 'x']]);
+    assert.deepEqual(plain(b.cellRuns['0,0']), [{ text: 'Hola ' }, { text: 'mundo', bold: true }]);
+    assert.ok(w.document.querySelector('[data-tr="0"][data-tc="0"] strong, [data-tr="0"][data-tc="0"] b'));
+  });
+
+  withDom('negrita en un item de lista se guarda como itemRuns, sin tocar los demas', async () => {
+    const { w, server } = await boot([{ id: 'l', type: 'list', items: ['uno', 'dos tres'] }]);
+    const it = w.document.querySelector('[data-li="1"]');
+    select(w, it, 4, 8);
+    w.document.querySelector('[data-block-toggle="bold"]').click();
+    await tick(60);
+    const b = server.doc.blocks[0];
+    assert.deepEqual(plain(b.items), ['uno', 'dos tres']);
+    assert.equal(b.itemRuns[0], null);
+    assert.deepEqual(plain(b.itemRuns[1]), [{ text: 'dos ' }, { text: 'tres', bold: true }]);
+  });
+
+  withDom('Enter en un item no parte el bloque', async () => {
+    const { w, server } = await boot([{ id: 'l', type: 'list', items: ['uno'] }]);
+    const it = w.document.querySelector('[data-li="0"]');
+    select(w, it, 3, 3);
+    await key(w, it, 'Enter');
+    assert.equal(server.doc.blocks.length, 1);
   });
 });

@@ -129,6 +129,30 @@
     return out;
   }
 
+  // ---- formato dentro de items de lista y celdas de tabla ----------------
+  // `items` y `rows` siguen siendo texto plano (es lo que leen el buscador, el
+  // markdown, la IA...). El formato de un fragmento vive aparte:
+  //   list.itemRuns = [runs | null, ...]      (uno por item)
+  //   table.cellRuns = { "fila,col": runs }   (solo celdas con formato)
+  // Regla: el texto plano manda. Si los tramos ya no dicen lo mismo que el
+  // texto (alguien edito el texto sin pasar por el formato), se descartan.
+  const FORMAT_KEYS = ['bold', 'italic', 'underline', 'strike'];
+  function runsHaveFormat(runs) {
+    return runs.some(r => FORMAT_KEYS.some(k => r[k] === true) || r.color || r.highlight || r.font || r.size || r.link);
+  }
+  function richRunsFor(rawRuns, text, trim) {
+    if (!Array.isArray(rawRuns)) return null;
+    let runs = rawRuns.map(normalizeRun).filter(Boolean);
+    if (trim && runs.length) {
+      runs = runs.map(r => Object.assign({}, r));
+      runs[0].text = runs[0].text.replace(/^\s+/, '');
+      runs[runs.length - 1].text = runs[runs.length - 1].text.replace(/\s+$/, '');
+      runs = runs.filter(r => r.text.length);
+    }
+    if (!runs.length || !runsHaveFormat(runs)) return null;
+    return runs.map(r => r.text).join('') === text ? runs : null;
+  }
+
   function normalizeBlock(raw) {
     if (!raw) return null;
     const type = BLOCK_TYPES.includes(raw.type) ? raw.type : 'paragraph';
@@ -141,12 +165,18 @@
       else block.text = t;
       if (!block.text && !block.runs) return null;
     } else if (type === 'list') {
-      const items = (Array.isArray(raw.items) ? raw.items : String(raw.text || '').split('\n'))
-        .map(item => (item && typeof item === 'object' ? blockText(item) : String(item == null ? '' : item)))
-        .map(s => s.trim())
-        .filter(s => s.length);
+      const rawItems = Array.isArray(raw.items) ? raw.items : String(raw.text || '').split('\n');
+      const items = [];
+      const itemRuns = [];
+      rawItems.forEach((item, i) => {
+        const text = (item && typeof item === 'object' ? blockText(item) : String(item == null ? '' : item)).trim();
+        if (!text.length) return;
+        items.push(text);
+        itemRuns.push(richRunsFor(Array.isArray(raw.itemRuns) ? raw.itemRuns[i] : null, text, true));
+      });
       if (!items.length) return null;
       block.items = items;
+      if (itemRuns.some(Boolean)) block.itemRuns = itemRuns;
       block.ordered = raw.ordered === true;
       if (raw.level != null) block.level = clampInt(raw.level, 0, 3, 0);
     } else if (type === 'table') {
@@ -155,6 +185,18 @@
       if (!rows.length) return null;
       block.rows = rows;
       block.header = raw.header !== false;
+      if (raw.cellRuns && typeof raw.cellRuns === 'object') {
+        const cellRuns = {};
+        for (const key of Object.keys(raw.cellRuns)) {
+          const m = /^(\d+),(\d+)$/.exec(key);
+          if (!m) continue;
+          const cell = rows[Number(m[1])] && rows[Number(m[1])][Number(m[2])];
+          if (cell == null) continue;
+          const runs = richRunsFor(raw.cellRuns[key], cell, false);
+          if (runs) cellRuns[key] = runs;
+        }
+        if (Object.keys(cellRuns).length) block.cellRuns = cellRuns;
+      }
     } else if (type === 'image') {
       const src = String(raw.src || '');
       if (!isSafeImageSrc(src)) return null;

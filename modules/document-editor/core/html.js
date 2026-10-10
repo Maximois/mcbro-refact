@@ -89,7 +89,10 @@
         return `<pre${style}><code>${esc(model.blockText(block))}</code></pre>`;
       case 'list': {
         const tag = block.ordered ? 'ol' : 'ul';
-        const items = (block.items || []).map(it => `<li>${esc(it)}</li>`).join('');
+        const items = (block.items || []).map((it, i) => {
+          const rr = block.itemRuns && block.itemRuns[i];
+          return `<li>${rr ? runsToHtml({ runs: rr }) : esc(it)}</li>`;
+        }).join('');
         return `<${tag}${style}>${items}</${tag}>`;
       }
       case 'table': {
@@ -97,7 +100,10 @@
         const head = block.header !== false;
         const body = rows.map((row, r) => {
           const tag = head && r === 0 ? 'th' : 'td';
-          return `<tr>${row.map(cell => `<${tag}>${esc(cell).replace(/\n/g, '<br>')}</${tag}>`).join('')}</tr>`;
+          return `<tr>${row.map((cell, c) => {
+            const rr = block.cellRuns && block.cellRuns[r + ',' + c];
+            return `<${tag}>${rr ? runsToHtml({ runs: rr }) : esc(cell).replace(/\n/g, '<br>')}</${tag}>`;
+          }).join('')}</tr>`;
         }).join('');
         return `<table>${body}</table>`;
       }

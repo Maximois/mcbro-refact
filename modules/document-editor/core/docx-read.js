@@ -435,21 +435,55 @@ const merged = texts.map(t => {
     return blocks;
   }
 
-  function tableBlocks(tbl) {
+  // Runs de un item de lista o una celda: solo se conservan si llevan formato.
+  function inlineModelRuns(runs) {
+    const texts = (runs || []).filter(r => r.text).map(r => {
+      const m = r.props || {};
+      const run = { text: String(r.text).replace(/\u00a0/g, ' ').replace(/\n+/g, ' ') };
+      for (const key of ['bold', 'italic', 'underline']) if (m[key] === true) run[key] = true;
+      if (m.strike) run.strike = true;
+      if (m.color) run.color = m.color;
+      if (m.highlight) run.highlight = m.highlight;
+      if (m.font) run.font = m.font;
+      if (m.size && m.size !== 11) run.size = m.size;
+      if (m.link) {
+        run.link = m.link;
+        if (String(run.color).toLowerCase() === '#0563c1') delete run.color;
+        if (run.underline === true) delete run.underline;
+      }
+      return run;
+    });
+    return texts.some(r => r.bold || r.italic || r.underline || r.strike || r.color || r.highlight || r.font || r.size || r.link) ? texts : null;
+  }
+
+  function tableBlocks(tbl, ctx) {
     const rows = [];
+    const cellRuns = {};
+    let ri = 0;
     for (const tr of xml.childNodes(tbl, 'tr')) {
       const cells = [];
       for (const tc of xml.childNodes(tr, 'tc')) {
         const texts = [];
+        let all = [];
         for (const p of xml.childNodes(tc, 'p')) {
           const t = xml.textOf(p).replace(/\s+/g, ' ').trim();
-          if (t) texts.push(t);
+          if (!t) continue;
+          texts.push(t);
+          if (ctx) {
+            const rr = inlineModelRuns(runsOfParagraph(p, ctx)) || runsOfParagraph(p, ctx).filter(r => r.text).map(r => ({ text: String(r.text).replace(/\n+/g, ' ') }));
+            if (all.length) all.push({ text: ' ' });
+            all = all.concat(rr);
+          }
         }
+        if (ctx && all.length && inlineModelRuns(all.map(r => ({ text: r.text, props: r })))) cellRuns[ri + ',' + cells.length] = all.map(r => Object.assign({}, r, { text: r.text.replace(/\s+/g, ' ') }));
         cells.push(texts.join(' '));
       }
-      if (cells.length) rows.push(cells);
+      if (cells.length) { rows.push(cells); ri++; }
     }
-    return rows.length ? [{ type: 'table', rows, header: true }] : [];
+    if (!rows.length) return [];
+    const b = { type: 'table', rows, header: true };
+    if (Object.keys(cellRuns).length) b.cellRuns = cellRuns;
+    return [b];
   }
 
   // --------------------------------------------------------- numeracion
@@ -510,8 +544,9 @@ const merged = texts.map(t => {
 
     const flushList = () => {
       if (listBuffer && listBuffer.items.length) {
-        const { items, ordered, level, ...rest } = listBuffer;
-        blocks.push(Object.assign({ type: 'list', items, ordered, level }, rest));
+        const { items, itemRuns, ordered, level, ...rest } = listBuffer;
+        const extra = itemRuns.some(Boolean) ? { itemRuns } : {};
+        blocks.push(Object.assign({ type: 'list', items, ordered, level }, extra, rest));
       }
       listBuffer = null;
     };
@@ -546,11 +581,11 @@ if (info.list) {
             flushList();
             // Los items son cadenas planas: el formato del estilo se guarda a
             // nivel de bloque, que es lo unico que el modelo puede representar.
-            listBuffer = { items: [], ordered, level: info.level || 0 };
+            listBuffer = { items: [], itemRuns: [], ordered, level: info.level || 0 };
             Object.assign(listBuffer, typedProps(styleOf(info.style, ctx.styles)));
             if (info.align) listBuffer.align = info.align;
           }
-            if (text) listBuffer.items.push(text);
+            if (text) { listBuffer.items.push(text); listBuffer.itemRuns.push(inlineModelRuns(runs)); }
             if (pageBreakAfter) flushList();
             continue;
           }
@@ -577,7 +612,7 @@ if (info.list) {
         }
         if (name === 'tbl') {
           flushList();
-          emit(tableBlocks(child));
+          emit(tableBlocks(child, ctx));
           continue;
         }
         if (name === 'sdt') {

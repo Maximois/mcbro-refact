@@ -156,6 +156,24 @@
     return out;
   }
 
+  // Tramos con formato -> XML de runs (con enlaces); `base` es el formato del
+  // contenedor (negrita de un encabezado de tabla, por ejemplo).
+  function runsXml(runs, base, ctx) {
+    let out = '';
+    for (let i = 0; i < runs.length;) {
+      const link = runs[i].link;
+      let j = i;
+      let chunk = '';
+      while (j < runs.length && runs[j].link === link) {
+        chunk += textRun(runs[j].text, Object.assign({}, base, runs[j]));
+        j++;
+      }
+      out += link && ctx && ctx.addLink ? `<w:hyperlink r:id="${ctx.addLink(link)}" w:history="1">${chunk}</w:hyperlink>` : chunk;
+      i = j;
+    }
+    return out;
+  }
+
   function runsOf(block, blockProps, ctx) {
     const base = {};
     if (blockProps.bold) base.bold = true;
@@ -193,13 +211,15 @@
 
   function emitList(block, ctx) {
     const items = block.items || [];
-    return items.map(item => {
+    return items.map((item, i) => {
       // Cada item es un parrafo con numeracion, que es como Word modela
       // una lista: permite seguir editandola con los controles de Word.
-      return `<w:p>${paraProps(block, ctx)}${textRun(item, {
+      const base = {
         bold: block.bold, italic: block.italic, underline: block.underline,
         color: block.color, size: block.size
-      })}</w:p>`;
+      };
+      const rr = block.itemRuns && block.itemRuns[i];
+      return `<w:p>${paraProps(block, ctx)}${rr ? runsXml(rr, base, ctx) : textRun(item, base)}</w:p>`;
     }).join('');
   }
 
@@ -214,7 +234,8 @@
       const cells = [];
       for (let c = 0; c < cols; c++) {
         const text = row[c] == null ? '' : String(row[c]);
-        const runs = textRun(text, { bold: isHead });
+        const rr = block.cellRuns && block.cellRuns[r + ',' + c];
+        const runs = rr ? runsXml(rr, { bold: isHead }, ctx) : textRun(text, { bold: isHead });
         cells.push(
           `<w:tc><w:tcPr><w:tcW w:w="${total}" w:type="dxa"/>` +
           (isHead ? '<w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/>' : '') +

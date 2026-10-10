@@ -290,6 +290,10 @@
   '.doc-b td{padding:0;}.doc-b td>.doc-t{padding:4pt 6pt;}',
   '.doc-b th{padding:0;}.doc-b th>.doc-t{padding:4pt 6pt;background:#eee;font-weight:600;}',
   '.doc-b .doc-t:focus{outline:2px solid #0078d4;outline-offset:-2px;}',
+  '.doc-b .doc-cell{margin:0;line-height:1.15;min-width:24px;flex:1 1 auto;}',
+  '.doc-b .doc-list-item .doc-cell{margin:0 0 6pt;}',
+  '.doc-b th>.doc-cell,.doc-b td>.doc-cell{padding:4pt 6pt;min-height:1.2em;}',
+  '.doc-b th>.doc-cell{background:#eee;font-weight:600;}',
   // ── Superficie de edicion (contenteditable) ──
   // Estas medidas son las de core/html.js, que es lo que imprime y exporta:
   // 17/14/12pt para los titulos, 11pt el cuerpo. Editar y ver tiene que ser
@@ -521,7 +525,8 @@ function ensureTab() {
         control.hasAttribute('data-block-list') || control.hasAttribute('data-block-indent') || control.hasAttribute('data-style-save') ||
         control.id === 'doc-lh' || control.id === 'doc-insert-pagebreak';
       if (control.hasAttribute('data-always')) { control.disabled = !(ui.snap && ui.snap.open); return; }
-      control.disabled = !block || (formatOnly && !supported);
+      const inlineInTable = block && block.type === 'table' && control.hasAttribute('data-block-toggle');
+      control.disabled = !block || (formatOnly && !supported && !inlineInTable);
     });
     if (!block) return;
     const blocks = ui.snap.doc.blocks || [];
@@ -657,6 +662,8 @@ function ensureTab() {
       blocks = pasteLib.blocksFromHtml(doc.body);
     } catch (err) { return false; }
     if (!pasteLib.isRich(blocks)) return false;
+    const inCell = ce.dataset.li != null || ce.dataset.tr != null;
+    if (inCell && !(blocks.length === 1 && blocks[0].type === 'paragraph')) return false;
     const sel = window.getSelection && window.getSelection();
     const inCe = sel && sel.rangeCount && ce.contains(sel.getRangeAt(0).startContainer);
     const single = blocks.length === 1 && blocks[0].type === 'paragraph';
@@ -940,7 +947,7 @@ function ensureTab() {
     if (!tablesLib) return;
     const created = await insertBlockHere(tablesLib.create(rows, cols, true));
     if (created) setTimeout(() => {
-      const t = host() && host().querySelector('.doc-b[data-id="' + cssEscape(created.id) + '"] textarea.doc-t');
+      const t = host() && host().querySelector('.doc-b[data-id="' + cssEscape(created.id) + '"] [data-tr]');
       if (t) t.focus();
     }, 30);
   }
@@ -1074,7 +1081,7 @@ function ensureTab() {
 
     // Celda actual: las filas y columnas se agregan/quitan relativas a ella.
     b0.addEventListener('focusin', (e) => {
-      const ta = e.target.closest && e.target.closest('textarea[data-tr]');
+      const ta = e.target.closest && e.target.closest('[data-tr]');
       if (!ta) return;
       const bEl = ta.closest('.doc-b');
       if (bEl) ui.cell = { id: bEl.dataset.id, row: Number(ta.dataset.tr), col: Number(ta.dataset.tc) };
@@ -1249,14 +1256,21 @@ function ensureTab() {
     return '';
   }
 
+  // Item de lista o celda: misma superficie editable que un parrafo, con su
+  // coordenada en data-*. Los tramos con formato salen del overlay del bloque.
+  function cellMarkup(text, rr, attrs) {
+    const inner = Array.isArray(rr) && rr.length && html ? html.runsToHtml({ runs: rr }) : esc(text);
+    return '<div class="doc-ce doc-cell" contenteditable="true" spellcheck="false" data-ce="1" ' + attrs + '>' + inner + '</div>';
+  }
+
   function blockMarkup(b) {
     if (b.type === 'list') {
       const items = Array.isArray(b.items) ? b.items.slice() : [];
       if (!items.length) items.push('');
       const level = Math.min(3, Math.max(0, Number(b.level) || 0));
       return items.map((it, i) => '<div class="doc-list-item" data-level="' + level + '" data-marker="' +
-        esc(b.ordered ? (i + 1) + '.' : '•') + '"><textarea class="doc-t" rows="1" data-li="' + i +
-        '" placeholder="elemento">' + esc(it) + '</textarea></div>').join('');
+        esc(b.ordered ? (i + 1) + '.' : '•') + '">' + cellMarkup(it, Array.isArray(b.itemRuns) ? b.itemRuns[i] : null,
+          'data-li="' + i + '" data-ph="elemento"') + '</div>').join('');
     }
     if (b.type === 'table') {
       const rows = Array.isArray(b.rows) ? b.rows : [];
@@ -1267,8 +1281,8 @@ function ensureTab() {
         // Cada celda es un textarea propio: una tabla importada de Word era
         // texto fijo y no se podia editar ni una letra.
         (Array.isArray(row) ? row : []).forEach((cell, ci) => {
-          out += '<' + tag + '><textarea class="doc-t" rows="1" data-tr="' + ri + '" data-tc="' + ci +
-            '">' + esc(cell) + '</textarea></' + tag + '>';
+          out += '<' + tag + '>' + cellMarkup(cell, b.cellRuns && b.cellRuns[ri + ',' + ci],
+            'data-tr="' + ri + '" data-tc="' + ci + '"') + '</' + tag + '>';
         });
         out += '</tr>';
       });
@@ -1405,12 +1419,13 @@ function ensureTab() {
       return { id: bEl.dataset.id, ta: true, start: surface.selectionStart || 0, end: surface.selectionEnd || 0 };
     }
     const start = textOffset(surface, r.startContainer, r.startOffset);
+    const cell = surface.dataset.li != null ? { li: surface.dataset.li } : surface.dataset.tr != null ? { tr: surface.dataset.tr, tc: surface.dataset.tc } : null;
     let end = start;
     if (!r.collapsed) {
       const otro = textOffset(surface, r.endContainer, r.endOffset);
       if (otro != null) end = otro;
     }
-    return { id: bEl.dataset.id, start: start == null ? 0 : start, end: end };
+    return { id: bEl.dataset.id, start: start == null ? 0 : start, end: end, cell: cell };
   }
 
   function restoreCaret(st) {
@@ -1426,7 +1441,10 @@ function ensureTab() {
       try { ta.setSelectionRange(st.start, st.end); } catch (e) { /* sin seleccion util */ }
       return true;
     }
-    const ce = wrap.querySelector('.doc-ce');
+    let ce;
+    if (st.cell && st.cell.li != null) ce = wrap.querySelector('.doc-ce[data-li="' + st.cell.li + '"]');
+    else if (st.cell && st.cell.tr != null) ce = wrap.querySelector('.doc-ce[data-tr="' + st.cell.tr + '"][data-tc="' + st.cell.tc + '"]');
+    else ce = wrap.querySelector('.doc-ce');
     if (!ce) return false;
     const a = placeAt(ce, st.start);
     const b = st.end === st.start ? a : placeAt(ce, st.end);
@@ -1872,27 +1890,46 @@ function ensureTab() {
     // Cualquier confirmacion arranca el reloj del autoguardado.
     const block = ((snap.doc && snap.doc.blocks) || []).find((b) => b.id === id);
     if (!block) return;
+    const overlayOf = () => {
+      if (!Array.isArray(runs) || !runsLib) return null;
+      const c = runsLib.compact(runs, {});
+      return runsLib.hasFormatting(c) ? c : null;
+    };
+    const sameOverlay = (a, b) => (a || b) ? !!(a && b && runsLib.equal(a, b)) : true;
     if (cellRow != null && block.type === 'table') {
       const rows = (block.rows || []).map((r) => (Array.isArray(r) ? r.slice() : []));
-      if (!rows[cellRow] || rows[cellRow][cellCol] === text) return;
+      const key = cellRow + ',' + cellCol;
+      const ov = overlayOf();
+      if (!rows[cellRow]) return;
+      if (rows[cellRow][cellCol] === text && sameOverlay(ov, block.cellRuns && block.cellRuns[key])) return;
       rows[cellRow][cellCol] = text;
+      const cellRuns = Object.assign({}, block.cellRuns || {});
+      if (ov) cellRuns[key] = ov; else delete cellRuns[key];
+      const next = Object.assign({}, block, { rows, cellRuns });
+      if (!Object.keys(cellRuns).length) delete next.cellRuns;
       scheduleAutoSave();
       const res = await API.docEdit({
         expectedHash: snap.doc.hash,
-        ops: [{ op: 'replaceBlock', id, block: Object.assign({}, block, { rows }) }]
+        ops: [{ op: 'replaceBlock', id, block: next }]
       });
       if (res && res.ok) applySnapshot(res);
       else if (res && res.error) toast(res.error, 'error');
       return;
     }
     if (itemIndex != null && block.type === 'list') {
-      if (block.items[itemIndex] === text) return;
+      const ov = overlayOf();
+      const prevOv = Array.isArray(block.itemRuns) ? block.itemRuns[itemIndex] : null;
+      if (block.items[itemIndex] === text && sameOverlay(ov, prevOv)) return;
       const items = block.items.slice();
       items[itemIndex] = text;
+      const itemRuns = items.map((_, i) => (Array.isArray(block.itemRuns) ? block.itemRuns[i] || null : null));
+      itemRuns[itemIndex] = ov;
+      const next = Object.assign({}, block, { items, itemRuns });
+      if (!itemRuns.some(Boolean)) delete next.itemRuns;
       scheduleAutoSave();
       const res = await API.docEdit({
         expectedHash: snap.doc.hash,
-        ops: [{ op: 'replaceBlock', id, block: Object.assign({}, block, { items }) }]
+        ops: [{ op: 'replaceBlock', id, block: next }]
       });
       if (res && res.ok) applySnapshot(res);
       else if (res && res.error) toast(res.error, 'error');
@@ -2323,6 +2360,32 @@ const h = host();
     const ta = e.target && e.target.closest && e.target.closest('.doc-t');
     const ce = e.target && e.target.closest && e.target.closest('.doc-ce');
     const bEl = (ta || ce) && (ta || ce).closest('.doc-b');
+    if (ce && (ce.dataset.li != null || ce.dataset.tr != null)) {
+      // Item o celda: no se fusionan ni se parten como un parrafo.
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (ce.dataset.li != null) {
+          let ok = false;
+          try { ok = document.execCommand && document.execCommand('insertLineBreak'); } catch (err) { ok = false; }
+          if (!ok) {
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount) {
+              const r = sel.getRangeAt(0);
+              r.deleteContents();
+              const br = document.createElement('br');
+              r.insertNode(br);
+              r.setStartAfter(br); r.collapse(true);
+              sel.removeAllRanges(); sel.addRange(r);
+            }
+          }
+          ce.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (bEl) {
+          await flushPending();
+          await insertAfter(bEl.dataset.id);
+        }
+      }
+      return;
+    }
     if (ce) {
       // En la superficie de texto, Enter divide el bloque en el punto del
       // cursor. Shift+Enter es el salto de linea dentro del parrafo.

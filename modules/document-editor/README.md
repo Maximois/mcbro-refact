@@ -224,3 +224,14 @@ node tools/pdf-smoke.js <archivo.pdf>      # extracción PDF real
 `doc-editor-smoke.js` intercepta `require('electron')` con un stub, así que
 corre fuera de la app. La exportación a PDF necesita una ventana real y solo
 se prueba a mano dentro de Electron.
+## Formato dentro de listas y tablas
+
+Los items de lista y las celdas son superficies editables como un parrafo (`.doc-cell`),
+asi que negrita, cursiva, color, fuente, tamano y enlaces funcionan igual. El texto plano
+(`items`, `rows`) sigue siendo la fuente de verdad; el formato vive en overlays opcionales:
+`itemRuns` (arreglo alineado con `items`, `null` = sin formato) y `cellRuns`
+(`{"fila,col": runs}`). Si el texto de un item/celda cambia por otra via (replace, setCell,
+patch de la IA) el overlay se descarta en la normalizacion. Se conserva en HTML, PDF y DOCX
+(ida y vuelta). Enter en un item inserta salto de linea; Enter en una celda crea un parrafo debajo.
+Limites: el pegado de listas/tablas con formato aun entra como texto plano, y la operacion
+`style` de la IA no aplica sobre items/celdas.

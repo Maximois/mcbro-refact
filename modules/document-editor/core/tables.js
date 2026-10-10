@@ -43,9 +43,24 @@
     return block;
   }
 
+  // El formato de las celdas (cellRuns, clave "fila,col") acompana a su celda
+  // cuando se insertan o quitan filas y columnas.
+  function remap(b, fn) {
+    if (!b.cellRuns) return;
+    const out = {};
+    for (const key of Object.keys(b.cellRuns)) {
+      const [r, c] = key.split(',').map(Number);
+      const to = fn(r, c);
+      if (to) out[to[0] + ',' + to[1]] = b.cellRuns[key];
+    }
+    if (Object.keys(out).length) b.cellRuns = out; else delete b.cellRuns;
+  }
+
   function clone(block) {
     if (!block || block.type !== 'table' || !Array.isArray(block.rows) || !block.rows.length) return null;
-    return Object.assign({}, block, { rows: rectangular(block.rows.map(r => (Array.isArray(r) ? r.map(String) : []))) });
+    const b = Object.assign({}, block, { rows: rectangular(block.rows.map(r => (Array.isArray(r) ? r.map(String) : []))) });
+    if (b.cellRuns) b.cellRuns = Object.assign({}, b.cellRuns);
+    return b;
   }
 
   /** at = indice de la fila de referencia; where 'before' | 'after' (def. after). */
@@ -53,7 +68,9 @@
     const b = clone(block);
     if (!b || b.rows.length >= MAX_ROWS) return null;
     const i = int(at, 0, b.rows.length - 1, b.rows.length - 1);
-    b.rows.splice(where === 'before' ? i : i + 1, 0, new Array(cols(b)).fill(''));
+    const at2 = where === 'before' ? i : i + 1;
+    b.rows.splice(at2, 0, new Array(cols(b)).fill(''));
+    remap(b, (r, c) => [r >= at2 ? r + 1 : r, c]);
     return b;
   }
 
@@ -63,6 +80,7 @@
     const i = int(at, 0, b.rows.length - 1, -1);
     if (i < 0) return null;
     b.rows.splice(i, 1);
+    remap(b, (r, c) => (r === i ? null : [r > i ? r - 1 : r, c]));
     return b;
   }
 
@@ -70,7 +88,9 @@
     const b = clone(block);
     if (!b || cols(b) >= MAX_COLS) return null;
     const i = int(at, 0, cols(b) - 1, cols(b) - 1);
-    b.rows.forEach(r => r.splice(where === 'before' ? i : i + 1, 0, ''));
+    const at2 = where === 'before' ? i : i + 1;
+    b.rows.forEach(r => r.splice(at2, 0, ''));
+    remap(b, (r, c) => [r, c >= at2 ? c + 1 : c]);
     return b;
   }
 
@@ -80,6 +100,7 @@
     const i = int(at, 0, cols(b) - 1, -1);
     if (i < 0) return null;
     b.rows.forEach(r => r.splice(i, 1));
+    remap(b, (r, c) => (c === i ? null : [r, c > i ? c - 1 : c]));
     return b;
   }
 
@@ -89,6 +110,7 @@
     const r = Number(row), c = Number(col);
     if (!Number.isInteger(r) || !Number.isInteger(c) || r < 0 || c < 0 || r >= b.rows.length || c >= cols(b)) return null;
     b.rows[r][c] = String(text == null ? '' : text);
+    remap(b, (rr, cc) => (rr === r && cc === c ? null : [rr, cc]));
     return b;
   }
 
