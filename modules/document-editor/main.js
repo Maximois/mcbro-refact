@@ -367,9 +367,38 @@ function requireOpen() {
   return null;
 }
 
-function touchState() {
+// Las imagenes llegan como base64 (megabytes). El renderer ya las tiene
+// decodificadas en sus nodos: mandarle los bytes de nuevo en CADA parche hace
+// que el deserializado del IPC congele el hilo del renderer (medido: >3s en
+// un doc con 8 imagenes). Si la imagen no cambio se manda sin `src`; si es
+// nueva o distinta viaja completa la primera vez (y el renderer la guarda).
+const imgSrcCache = new Map();
+function lightDoc(doc) {
+  if (!doc || !Array.isArray(doc.blocks)) return doc;
+  let changed = false;
+  const blocks = doc.blocks.map((b) => {
+    if (b.type !== 'image' || typeof b.src !== 'string' || !b.src) return b;
+    if (imgSrcCache.get(b.id) === b.src) {
+      changed = true;
+      const copy = Object.assign({}, b);
+      delete copy.src;
+      return copy;
+    }
+    imgSrcCache.set(b.id, b.src);
+    return b;
+  });
+  return changed ? Object.assign({}, doc, { blocks }) : doc;
+}
+function lightSnapshot(opts) {
+  const snap = stateSnapshot(opts);
+  if (!snap.open) return snap;
+  const doc = lightDoc(snap.doc);
+  return doc === snap.doc ? snap : Object.assign({}, snap, { doc });
+}
+
+function touchState(skipHash) {
   if (!state) return;
-  state.doc.hash = model.hashDoc(state.doc);
+  if (!skipHash) state.doc.hash = model.hashDoc(state.doc);
   state.dirty = true;
   broadcast();
 }
@@ -381,7 +410,7 @@ function broadcast(force) {
   const now = Date.now();
   if (!force && now - lastBroadcast < 120) return;
   lastBroadcast = now;
-  try { win.webContents.send('doc:changed', stateSnapshot()); } catch {}
+  try { win.webContents.send('doc:changed', lightSnapshot()); } catch {}
 }
 
 function emitOpenRequest(file, snap) {
@@ -720,7 +749,7 @@ function applyUserPatch(req, who) {
   if (state.undoStack.length > MAX_UNDO_STEPS) state.undoStack.shift();
   state.redoStack.length = 0;
   state.doc = res.doc;
-  touchState();
+  touchState(true);
   log(`parche de ${who}: ${res.diff.length} cambio(s)`);
   return {
     ok: true,
@@ -728,7 +757,7 @@ function applyUserPatch(req, who) {
     diff: res.diff,
     summary: res.summary,
     hash: state.doc.hash,
-    doc: state.doc,
+    doc: lightDoc(state.doc),
     dirty: state.dirty,
     history: {
       canUndo: state.undoStack.length > 0,

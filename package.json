@@ -20,7 +20,8 @@
   },
   "devDependencies": {
     "electron": "^30.0.9",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "jsdom": "^30.1.2"
   },
   "build": {
     "appId": "com.mcbrowser.v2",

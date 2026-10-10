@@ -40,22 +40,41 @@ async function boot(blocks, page, styles) {
   const w = dom.window;
 
   // Estado del "main": un documento y el mismo aplicador de parches que usa el main real.
+  // Igual que en main.js, las imagenes viajan livianas: `server.doc` conserva SIEMPRE
+  // los bytes; el snapshot de las respuestas los omite cuando la imagen ya se envio
+  // completa (lightSnapshot), salvo el hash y el doc completo que da docState.
   const server = { doc: model.createDoc({ blocks, page, styles }), edits: [] };
+  const knownImgSrc = new Map();
+  const light = (doc) => {
+    if (!doc || !Array.isArray(doc.blocks)) return doc;
+    const blocks = doc.blocks.map((b) => {
+      if (b.type !== 'image' || typeof b.src !== 'string' || !b.src) return b;
+      if (knownImgSrc.get(b.id) === b.src) {
+        const copy = Object.assign({}, b);
+        delete copy.src;
+        return copy;
+      }
+      knownImgSrc.set(b.id, b.src);
+      return b;
+    });
+    return blocks === doc.blocks ? doc : Object.assign({}, doc, { blocks });
+  };
   const snapshot = () => ({
     open: true, doc: server.doc, sourcePath: '', sourceName: '', format: 'docx', dirty: true,
     pages: [], pageCount: 0, warnings: [], savedFormat: 'docx',
     history: { canUndo: false, canRedo: false },
     capabilities: { canSaveInPlace: false, isPdfSource: false, hasBytes: false }
   });
+  const lightSnapshot = () => Object.assign({}, snapshot(), { doc: light(server.doc) });
   w.mc = {
     on() {},
-    docState: async () => snapshot(),
+    docState: async () => Object.assign({}, snapshot(), { doc: light(server.doc) }),
     docEdit: async (req) => {
       server.edits.push(req.ops);
       const res = patch.applyPatch(server.doc, { expectedHash: req.expectedHash, ops: req.ops });
-      if (!res.ok) return { ok: false, stale: !!res.stale, error: (res.errors && res.errors[0] && res.errors[0].message) || 'patch' };
+if (!res.ok) return { ok: false, stale: !!res.stale, error: (res.errors && res.errors[0] && res.errors[0].message) || 'patch' };
       server.doc = res.doc;
-      return Object.assign({ ok: true }, snapshot());
+      return Object.assign({ ok: true }, lightSnapshot());
     }
   };
 
@@ -347,6 +366,59 @@ describe('renderer: tablas e imagenes (hito 2)', () => {
     assert.equal(server.doc.blocks[1].type, 'image');
     assert.equal(server.doc.blocks[1].width, 100);
     assert.equal(server.doc.blocks[1].height, 50);
+  });
+});
+
+describe('renderer: imagenes que viajan sin bytes (lightDoc)', () => {
+  withDom('un snapshot sin src conserva la imagen en el repintado', async () => {
+    const { w, server } = await boot([
+      { id: 'p1', type: 'paragraph', text: 'antes' },
+      { id: 'img1', type: 'image', src: PNG_URI, width: 400, height: 200 },
+      { id: 'p2', type: 'paragraph', text: 'despues' }
+    ]);
+    const antes = w.document.querySelector('.doc-b[data-id="img1"] img');
+    assert.ok(antes.src.includes('iVBORw0KGgo='));
+
+    const res = await w.mc.docEdit({ expectedHash: server.doc.hash, ops: [{ op: 'replaceBlock', id: 'p1', block: { type: 'paragraph', text: 'antes x' } }] });
+    assert.equal(res.ok, true);
+    assert.equal(res.doc.blocks.find((b) => b.id === 'img1').src, undefined, 'el snapshot viaja sin los bytes');
+    w.DocEditor.applySnapshot(res);
+
+    const despues = w.document.querySelector('.doc-b[data-id="img1"] img');
+    assert.ok(despues.src.includes('iVBORw0KGgo='), 'el repintado recupera el src del cache');
+    assert.equal(w.document.querySelectorAll('#doc-host .doc-b').length, 3);
+  });
+
+  withDom('redimensionar con src omitido no pierde la imagen', async () => {
+    const { w, server } = await boot([
+      { id: 'img1', type: 'image', src: PNG_URI, width: 400, height: 200 },
+      { id: 'p1', type: 'paragraph', text: 'a' }
+    ]);
+    const res = await w.mc.docEdit({ expectedHash: server.doc.hash, ops: [{ op: 'replaceBlock', id: 'p1', block: { type: 'paragraph', text: 'ab' } }] });
+    assert.equal(res.ok, true);
+    w.DocEditor.applySnapshot(res);
+
+    w.document.querySelector('.doc-b[data-type="image"] img').dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    await click(w, w.document.querySelector('#doc-objbar [data-img-pct="50"]'));
+    const b = server.doc.blocks[0];
+    assert.equal(b.type, 'image');
+    assert.ok(b.width !== 400, 'el ancho cambio');
+    assert.ok(b.src, 'el src se conserva al reenviar el bloque');
+    assert.match(b.src, /^data:image\/png;base64,/);
+  });
+
+  withDom('una imagen nueva con src llena el cache y se pinta', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', text: 'uno' }]);
+    const res = await w.mc.docEdit({
+      expectedHash: server.doc.hash,
+      ops: [{ op: 'insert', index: 1, block: { id: 'img9', type: 'image', src: PNG_URI, width: 300, height: 100 } }]
+    });
+    assert.equal(res.ok, true);
+    assert.equal(res.doc.blocks.find((b) => b.id === 'img9').src, PNG_URI, 'una imagen nueva viaja completa');
+    w.DocEditor.applySnapshot(res);
+    await tick();
+    assert.equal(w.document.querySelector('.doc-b[data-id="img9"] img').src.includes('iVBORw0KGgo='), true);
   });
 });
 
