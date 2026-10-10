@@ -44,6 +44,34 @@
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  // El main viaja liviano: cuando una imagen ya se envio completa (lightDoc)
+  // el snapshot llega sin su `src` base64. Estas son propias del renderer: si
+  // el bloque id ya se vio con bytes, se recuperan al repintar (el render no
+  // reusa nodos: reconstruye el innerHTML y sin esto la imagen saldria en
+  // blanco en cada parche).
+  const knownImgSrc = new Map();
+  function rememberImgSrc(snap) {
+    if (!snap || typeof snap !== 'object' || !snap.doc || !Array.isArray(snap.doc.blocks)) return snap;
+    let changed = false;
+    const blocks = snap.doc.blocks.map((b) => {
+      if (!b || b.type !== 'image') return b;
+      if (typeof b.src === 'string' && b.src) {
+        knownImgSrc.set(b.id, b.src);
+        return b;
+      }
+      const known = knownImgSrc.get(b.id);
+      if (known) {
+        changed = true;
+        const copy = Object.assign({}, b);
+        copy.src = known;
+        return copy;
+      }
+      return b;
+    });
+    if (!changed) return snap;
+    return Object.assign({}, snap, { doc: Object.assign({}, snap.doc, { blocks }) });
+  }
   const panel = () => document.getElementById(PANEL_ID);
   const host = () => document.getElementById(HOST_ID);
   const el = (id) => { const h = host(); return h ? h.querySelector('#' + id) : null; };
@@ -2003,7 +2031,7 @@ function ensureTab() {
     if (!snap || typeof snap !== 'object') return;
     if (snap.error || snap.canceled) return;
     if (!('open' in snap)) return;
-    ui.snap = snap;
+    ui.snap = rememberImgSrc(snap);
     repaint();
   }
 
@@ -2476,7 +2504,7 @@ const h = host();
       if (panel() && !panel().classList.contains('active') && typeof showPanel === 'function') showPanel('doc');
       wireEditing();
       if (!ui.snap) {
-        ui.snap = await API.docState({});
+        ui.snap = rememberImgSrc(await API.docState({}));
         repaint();
       } else {
         repaint();
@@ -2536,7 +2564,7 @@ const h = host();
   // ── Eventos del main ───────────────────────────────────────────────────
   try {
     API.on('doc:changed', (snap) => {
-      ui.snap = snap;
+      ui.snap = rememberImgSrc(snap);
       if (!host()) return;
       if (isActive()) repaint();
       else renderChrome();   // alcanza con actualizar el título de la pestaña
@@ -2554,7 +2582,7 @@ const h = host();
     buildUI();
     document.addEventListener('keydown', onKeyDown, true);
     API.docState({}).then((snap) => {
-      ui.snap = snap;
+      ui.snap = rememberImgSrc(snap);
       if (snap && snap.open && host()) renderChrome();
     }).catch(() => {});
   }

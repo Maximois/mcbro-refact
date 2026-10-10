@@ -629,6 +629,7 @@
     }
 
     const state = { doc: JSON.parse(JSON.stringify(source)) };
+    const beforeBlocks = source.blocks.map((b, i) => ({ index: i, id: b.id, type: b.type, text: describeTarget(b) }));
     const diff = [];
     let applied = 0;
 
@@ -679,9 +680,8 @@
 
     // Normalizar y limpiar: bloques que quedaron sin texto se van, salvo los
     // que son literalmente un salto o un separador.
-    const before = JSON.parse(JSON.stringify(source));
     const next = model.normalizeDoc(state.doc);
-    const removed = diffBlocks(before, next);
+    const removed = diffBlocks(beforeBlocks, next);
     if (removed.length) {
       for (const r of removed) diff.push({ op: 'cleanup', index: r.index, id: r.id, before: r.before, after: '' });
     }
@@ -740,14 +740,14 @@
   }
 
   /** Bloques que estaban antes y ya no estan (limpieza por texto vacio). */
-  function diffBlocks(before, after) {
+  function diffBlocks(beforeMeta, after) {
     const afterIds = new Set(after.blocks.map(b => b.id));
     const out = [];
-    before.blocks.forEach((b, i) => {
-      if (afterIds.has(b.id)) return;
-      if (b.type === 'pagebreak' || b.type === 'hr') return;
-      out.push({ index: i, id: b.id, before: describeTarget(b) });
-    });
+    for (const b of beforeMeta) {
+      if (afterIds.has(b.id)) continue;
+      if (b.type === 'pagebreak' || b.type === 'hr') continue;
+      out.push({ index: b.index, id: b.id, before: b.text });
+    }
     return out;
   }
 
