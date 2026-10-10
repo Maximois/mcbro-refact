@@ -702,3 +702,20 @@ describe('renderer: documento cambiado por detras', () => {
     assert.equal(server.doc.title, 'Otro');
   });
 });
+
+describe('renderer: vinetas y numeracion conservan el formato', () => {
+  withDom('parrafo con formato -> lista -> parrafo no pierde tramos', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', runs: [{ text: 'Hola ' }, { text: 'mundo', size: 18, font: 'Georgia', color: '#ff0000' }] }]);
+    surfaces(w)[0].dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    w.document.querySelector('[data-block-list="ordered"]').click();
+    await tick(80);
+    let b = server.doc.blocks[0];
+    assert.equal(b.type, 'list');
+    assert.deepEqual(plain(b.itemRuns[0]), [{ text: 'Hola ' }, { text: 'mundo', size: 18, font: 'Georgia', color: '#ff0000' }]);
+    w.document.querySelector('[data-block-list="ordered"]').click();
+    await tick(80);
+    b = server.doc.blocks[0];
+    assert.equal(b.type, 'paragraph');
+    assert.deepEqual(plain(b.runs), [{ text: 'Hola ' }, { text: 'mundo', size: 18, font: 'Georgia', color: '#ff0000' }]);
+  });
+});

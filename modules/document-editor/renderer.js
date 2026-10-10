@@ -227,7 +227,7 @@
 '#' + HOST_ID + ' .doc-table-grid i{width:18px;height:18px;border:1px solid var(--border,#2a2f3a);border-radius:2px;display:block;cursor:pointer;}',
 '#' + HOST_ID + ' .doc-table-grid i.hot{background:rgba(77,163,255,.45);border-color:var(--accent,#4da3ff);}',
 '#' + HOST_ID + ' .doc-table-size{margin-top:6px;text-align:center;font-size:.8rem;opacity:.8;}',
-'.doc-b .doc-img-wrap{position:relative;display:inline-block;max-width:100%;margin:8px;line-height:0;}',
+'.doc-b .doc-img-wrap{position:relative;display:inline-block;max-width:calc(100% - 16px);margin:8px;line-height:0;}',
 '.doc-b .doc-img-wrap img.doc-img{margin:0;display:block;width:100%;height:auto;}',
 '.doc-paper{position:relative;}',
 '.doc-paper-hf{position:absolute;font-size:9pt;color:#555;white-space:pre;overflow:hidden;pointer-events:none;}',
@@ -600,17 +600,54 @@ function ensureTab() {
     else if (res && res.error) toast(res.error, 'error');
   }
 
+  // Pasar de parrafo a lista (y volver) conserva el formato en linea: los tramos
+  // se reparten por renglon (itemRuns) y al volver se vuelven a unir.
+  function itemsOfBlock(block) {
+    if (block.type === 'list') {
+      return { items: (block.items || []).slice(), itemRuns: Array.isArray(block.itemRuns) ? block.itemRuns.slice() : [] };
+    }
+    const text = blockText(block).replace(/\r\n/g, '\n');
+    const runs = runsLib ? runsLib.ofBlock(block) : [];
+    const items = [];
+    const itemRuns = [];
+    let pos = 0;
+    text.split('\n').forEach((line) => {
+      const start = pos;
+      pos += line.length + 1;
+      if (!line.trim()) return;
+      items.push(line);
+      const part = runsLib && runs.length ? runsLib.slice(runs, start, start + line.length) : [];
+      itemRuns.push(part.length && runsLib.hasFormatting(part) ? part : null);
+    });
+    return { items, itemRuns };
+  }
+
+  function runsOfList(block) {
+    const items = block.items || [];
+    const out = [];
+    items.forEach((it, i) => {
+      if (i) out.push({ text: '\n' });
+      const rr = Array.isArray(block.itemRuns) ? block.itemRuns[i] : null;
+      (Array.isArray(rr) && rr.length ? rr : [{ text: it }]).forEach((r) => out.push(r));
+    });
+    return runsLib ? runsLib.normalize(out) : out;
+  }
+
   function applyBlockType(type, level) {
     applySelectedBlock((block) => {
       const next = Object.assign({}, block);
       if (type === 'list') {
-        next.items = block.type === 'list' ? block.items.slice() : blockText(block).split(/\r?\n/).filter((item) => item.trim());
-        if (!next.items.length) return null;
-        next.ordered = false;
+        const got = itemsOfBlock(block);
+        if (!got.items.length) return null;
+        next.items = got.items;
+        if (got.itemRuns.some(Boolean)) next.itemRuns = got.itemRuns; else delete next.itemRuns;
+        next.ordered = block.type === 'list' ? block.ordered === true : false;
         if (block.type !== 'list') { delete next.text; delete next.runs; }
       } else if (block.type === 'list') {
-        next.text = blockText(block);
-        delete next.items; delete next.ordered;
+        const rr = runsOfList(block);
+        if (runsLib && runsLib.hasFormatting(rr)) { next.runs = rr; delete next.text; }
+        else next.text = blockText(block);
+        delete next.items; delete next.itemRuns; delete next.ordered;
       }
       next.type = type;
       if (type === 'heading') next.level = level || 1;
@@ -660,8 +697,10 @@ function ensureTab() {
       if (block.type === 'list' && block.ordered === ordered) applyBlockType('paragraph');
       else applySelectedBlock((current) => {
         const next = Object.assign({}, current);
-        next.items = current.type === 'list' ? current.items.slice() : blockText(current).split(/\r?\n/).filter((item) => item.trim());
-        if (!next.items.length) return null;
+        const got = itemsOfBlock(current);
+        if (!got.items.length) return null;
+        next.items = got.items;
+        if (got.itemRuns.some(Boolean)) next.itemRuns = got.itemRuns; else delete next.itemRuns;
         next.type = 'list'; next.ordered = ordered;
         delete next.text; delete next.runs;
         return next;
@@ -2267,6 +2306,16 @@ const h = host();
     bar.dataset.inlineWired = '1';
     // Los botones no deben quitarle el foco ni la selección al texto.
     bar.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
+    // Un <input type=color> solo avisa si el valor CAMBIA: elegir otra vez el
+    // mismo color (o el rojo que trae de inicio) no hacia nada. Al abrirlo se
+    // pone un valor de relleno para que cualquier eleccion cuente como cambio.
+    ['#doc-color', '#doc-highlight'].forEach((sel) => {
+      const input = bar.querySelector(sel);
+      if (!input) return;
+      const reset = () => { if (!input.disabled) input.value = sel === '#doc-color' ? '#010203' : '#010204'; };
+      input.addEventListener('mousedown', reset);
+      input.addEventListener('keydown', reset);
+    });
     bar.querySelector('#doc-font').addEventListener('change', (e) => applyInline('font', e.target.value));
     bar.querySelector('#doc-color').addEventListener('change', (e) => applyInline('color', e.target.value));
     bar.querySelector('#doc-highlight').addEventListener('change', (e) => applyInline('highlight', e.target.value));
