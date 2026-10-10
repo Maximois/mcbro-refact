@@ -399,7 +399,9 @@
       '<select id="doc-lh" title="Interlineado"><option value="">Interlineado</option><option value="1">1,0</option>',
         '<option value="1.15">1,15</option><option value="1.5">1,5</option><option value="2">2,0</option><option value="2.5">2,5</option></select>',
       '<button class="doc-format-tool" data-block-indent="-1" title="Reducir sangría">⇤¶</button>',
-      '<button class="doc-format-tool" data-block-indent="1" title="Aumentar sangría">¶⇥</button></div>',
+      '<button class="doc-format-tool" data-block-indent="1" title="Aumentar sangría">¶⇥</button>',
+      '<button class="doc-format-tool" data-style-save title="Usar el formato de este bloque como estilo de todos los bloques de su tipo (título 1, párrafo, cita...)">📌 Fijar estilo</button>',
+      '<button class="doc-format-tool" data-style-reset data-always title="Quitar los estilos del documento">Sin estilos</button></div>',
     '<div class="doc-format-group" aria-label="Listas">',
       '<button class="doc-format-tool" data-block-list="bullet" title="Viñetas">•</button>',
       '<button class="doc-format-tool" data-block-list="ordered" title="Numeración">1.</button>',
@@ -515,7 +517,7 @@ function ensureTab() {
     bar.querySelectorAll('button,select').forEach((control) => {
       const formatOnly = control.id === 'doc-style' || control.id === 'doc-size' ||
         control.hasAttribute('data-block-toggle') || control.hasAttribute('data-block-align') ||
-        control.hasAttribute('data-block-list') || control.hasAttribute('data-block-indent') ||
+        control.hasAttribute('data-block-list') || control.hasAttribute('data-block-indent') || control.hasAttribute('data-style-save') ||
         control.id === 'doc-lh' || control.id === 'doc-insert-pagebreak';
       if (control.hasAttribute('data-always')) { control.disabled = !(ui.snap && ui.snap.open); return; }
       control.disabled = !block || (formatOnly && !supported);
@@ -588,6 +590,10 @@ function ensureTab() {
     if (!button || button.disabled) return;
     if (button.id === 'doc-page-setup') {
       openPageSetup();
+    } else if (button.hasAttribute('data-style-save')) {
+      saveBlockStyle();
+    } else if (button.hasAttribute('data-style-reset')) {
+      resetStyles();
     } else if (button.dataset.blockIndent) {
       const delta = Number(button.dataset.blockIndent);
       applySelectedBlock((block) => {
@@ -633,6 +639,58 @@ function ensureTab() {
     } else if (button.hasAttribute('data-block-delete')) {
       deleteSelectedBlock();
     }
+  }
+
+  // ── Estilos del documento (hito 4) ─────────────────────────────────────
+  const STYLE_PROPS = ['size', 'color', 'bold', 'italic', 'align', 'lineHeight'];
+  const STYLE_NAMES = { heading1: 'Título 1', heading2: 'Título 2', heading3: 'Título 3', paragraph: 'Normal', quote: 'Cita', code: 'Código' };
+
+  // Como "actualizar estilo desde la seleccion" de Word: el formato del bloque
+  // pasa a ser el de TODOS los bloques de su tipo, y al bloque se le quita lo
+  // que ahora hereda del estilo.
+  async function saveBlockStyle() {
+    const block = selectedBlock();
+    const M = window.MCDoc && window.MCDoc.model;
+    const key = block && M && M.styleKeyOf ? M.styleKeyOf(block) : null;
+    if (!key) { toast('Elegí un título, párrafo, cita o bloque de código', 'error'); return; }
+    await flushPending();
+    const cur = (ui.snap.doc.blocks || []).find((b) => b.id === block.id);
+    if (!cur) return;
+    const set = {};
+    STYLE_PROPS.forEach((k) => { if (cur[k] != null && cur[k] !== false) set[k] = cur[k]; });
+    // Una fuente uniforme en todos los tramos tambien cuenta.
+    if (Array.isArray(cur.runs) && cur.runs.length && cur.runs.every((r) => r.font && r.font === cur.runs[0].font)) set.font = cur.runs[0].font;
+    if (!Object.keys(set).length) { toast('Este bloque no tiene formato propio para fijar (tamaño, color, negrita, alineación…)', 'error'); return; }
+    const next = Object.assign({}, cur);
+    STYLE_PROPS.forEach((k) => { if (k in set) delete next[k]; });
+    if (set.font && Array.isArray(next.runs)) next.runs = next.runs.map((r) => { const c = Object.assign({}, r); delete c.font; return c; });
+    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [
+      { op: 'styles', set: { [key]: set } },
+      { op: 'replaceBlock', id: cur.id, block: next }
+    ] });
+    if (res && res.ok) {
+      applySnapshot(res); select(cur.id); scheduleAutoSave();
+      toast('Estilo «' + STYLE_NAMES[key] + '» actualizado', null, { label: 'Deshacer', run: () => travelHistory('undo') });
+    } else if (res && res.error) toast(res.error, 'error');
+  }
+
+  async function resetStyles() {
+    if (!ui.snap || !ui.snap.open || !ui.snap.doc.styles) { toast('El documento no tiene estilos propios'); return; }
+    await flushPending();
+    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'styles', clear: 'all' }] });
+    if (res && res.ok) {
+      applySnapshot(res); scheduleAutoSave();
+      toast('Estilos quitados', null, { label: 'Deshacer', run: () => travelHistory('undo') });
+    } else if (res && res.error) toast(res.error, 'error');
+  }
+
+  // Las reglas de estilo del documento se pintan en una hoja propia, despues de
+  // la del editor, y el formato propio de un bloque (style="") sigue ganando.
+  function applyDocStyles() {
+    let tag = document.getElementById('doc-doc-styles');
+    if (!tag) { tag = document.createElement('style'); tag.id = 'doc-doc-styles'; document.head.appendChild(tag); }
+    const styles = ui.snap && ui.snap.doc && ui.snap.doc.styles;
+    tag.textContent = styles && html && html.stylesCss ? html.stylesCss(styles, '.doc-b', '.doc-ce') : '';
   }
 
   // ── Pagina, enlaces y zoom (hito 3) ────────────────────────────────────
@@ -1330,6 +1388,7 @@ function ensureTab() {
       if (b2) b2.addEventListener('click', onOpen);
       return;
     }
+    applyDocStyles();
     const caret = captureCaret();
     const scrollY = b0.scrollTop;
     const blocks = (snap.doc && snap.doc.blocks) || [];

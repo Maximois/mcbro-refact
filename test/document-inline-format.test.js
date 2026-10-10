@@ -157,7 +157,7 @@ describe('DOCX: ida y vuelta del formato en linea', () => {
 
   test('el XML sigue el orden del esquema (rFonts, b, i, strike, color, sz, u, shd)', () => {
     const { parts } = docxWrite.docToDocxParts(model.createDoc({ blocks: [
-      { type: 'paragraph', runs: [{ text: 'x', bold: true, italic: true, strike: true, color: '#112233', size: 12, underline: true, highlight: '#ffff00' }] }
+      { type: 'paragraph', runs: [{ text: 'x', font: 'Georgia', bold: true, italic: true, strike: true, color: '#112233', size: 12, underline: true, highlight: '#ffff00' }] }
     ] }), { warnings: [] });
     const entry = parts.find((p) => /word\/document\.xml$/.test(p.name || p.path || ''));
     const xml = Buffer.from(entry.data || entry.content).toString('utf8');

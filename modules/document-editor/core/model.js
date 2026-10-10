@@ -218,6 +218,44 @@
     return { top: pick(p.marginTop), right: pick(p.marginRight), bottom: pick(p.marginBottom), left: pick(p.marginLeft) };
   }
 
+  // Estilos del documento: formato por defecto de cada tipo de bloque. Un
+  // bloque con una propiedad propia gana sobre el estilo. Solo se guardan las
+  // propiedades validas; un documento sin estilos no lleva el campo.
+  const STYLE_KEYS = ['heading1', 'heading2', 'heading3', 'paragraph', 'quote', 'code'];
+
+  function normalizeStyle(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const out = {};
+    if (raw.font && FONT_RE.test(String(raw.font).trim())) out.font = String(raw.font).trim();
+    if (raw.size != null) { const n = clampInt(raw.size, 4, 96, null); if (n != null) out.size = n; }
+    if (raw.color && HEX_RE.test(String(raw.color))) out.color = String(raw.color);
+    if (raw.bold === true || raw.bold === false) out.bold = raw.bold;
+    if (raw.italic === true || raw.italic === false) out.italic = raw.italic;
+    if (ALIGNS.includes(raw.align)) out.align = raw.align;
+    if (raw.lineHeight != null) {
+      const lh = Math.round(Number(raw.lineHeight) * 100) / 100;
+      if (isFinite(lh)) out.lineHeight = Math.min(3, Math.max(0.8, lh));
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  function normalizeStyles(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const out = {};
+    for (const key of STYLE_KEYS) {
+      const st = normalizeStyle(raw[key]);
+      if (st) out[key] = st;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  /** Clave de estilo de un bloque (heading1..3, paragraph, quote, code) o null. */
+  function styleKeyOf(block) {
+    if (!block) return null;
+    if (block.type === 'heading') return 'heading' + Math.min(3, Math.max(1, Number(block.level) || 1));
+    return ['paragraph', 'quote', 'code'].includes(block.type) ? block.type : null;
+  }
+
   function normalizeDoc(raw) {
     const input = raw || {};
     const blocks = (Array.isArray(input.blocks) ? input.blocks : [])
@@ -259,6 +297,8 @@
       blocks,
       warnings: Array.isArray(input.warnings) ? input.warnings.slice(0, 50) : []
     };
+    const styles = normalizeStyles(input.styles);
+    if (styles) doc.styles = styles;
     doc.hash = hashDoc(doc);
     return doc;
   }
@@ -283,9 +323,14 @@
         b.items ? b.items.join('\\u0002') : '',
         b.rows ? b.rows.map(r => r.join('\\u0003')).join('\\u0004') : '',
         b.src ? String(b.src).length : '',
-        b.bold ? 'B' : '', b.italic ? 'I' : '', b.align || ''
+        b.bold ? 'B' : '', b.italic ? 'I' : '', b.align || '',
+        // Todo lo demas del bloque (sangria, interlineado, tamano, color,
+        // encabezado de tabla, medidas de imagen, enlaces y formato de tramos):
+        // un parche viejo debe fallar tambien si solo cambio el formato.
+        JSON.stringify(Object.assign({}, b, { id: undefined, text: undefined, items: undefined, rows: undefined, src: undefined }))
       ].join('\\u0005'));
     }
+    parts.push(JSON.stringify(doc.page || null), JSON.stringify(doc.styles || null));
     return parts.join('\\u0006');
   }
 
@@ -413,7 +458,7 @@
   }
 
   return {
-    SCHEMA, PAGE, BLOCK_TYPES, ALIGNS, margins, isSafeLink,
+    SCHEMA, PAGE, BLOCK_TYPES, ALIGNS, STYLE_KEYS, normalizeStyles, styleKeyOf, margins, isSafeLink,
     createDoc, normalizeDoc, normalizeBlock, clone, withBlocks,
     hashDoc, blockText, withText, hasFormatting, isSafeImageSrc,
     plainText, toMarkdown, outline, stats, findBlocks, deriveTitle, genId, normalizeRun

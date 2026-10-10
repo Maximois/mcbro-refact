@@ -118,6 +118,36 @@
     }
   }
 
+  const STYLE_SELECTORS = {
+    heading1: 'h1', heading2: 'h2', heading3: 'h3', paragraph: 'p', quote: 'blockquote', code: 'pre'
+  };
+
+  /**
+   * Reglas CSS de los estilos del documento. `scope` antepone un selector
+   * (el editor las usa dentro de su hoja); `suffix` se agrega al elemento (el
+   * editor marca sus superficies con .doc-ce).
+   */
+  function stylesCss(styles, scope, suffix) {
+    if (!styles) return '';
+    const out = [];
+    for (const key of Object.keys(STYLE_SELECTORS)) {
+      const st = styles[key];
+      if (!st) continue;
+      const decl = [];
+      if (st.font) decl.push(`font-family: '${String(st.font).replace(/[^\p{L}\p{N} ._-]/gu, '')}', ${FONTS}`);
+      if (st.size) decl.push(`font-size: ${Number(st.size)}pt`);
+      if (st.color && /^#[0-9a-fA-F]{3,8}$/.test(st.color)) decl.push(`color: ${st.color}`);
+      if (st.bold === true) decl.push('font-weight: 700');
+      else if (st.bold === false) decl.push('font-weight: 400');
+      if (st.italic === true) decl.push('font-style: italic');
+      else if (st.italic === false) decl.push('font-style: normal');
+      if (st.align) decl.push(`text-align: ${st.align}`);
+      if (st.lineHeight) decl.push(`line-height: ${Number(st.lineHeight)}`);
+      if (decl.length) out.push(`${scope ? scope + ' ' : ''}${STYLE_SELECTORS[key]}${suffix || ''} { ${decl.join('; ')}; }`);
+    }
+    return out.join('\n');
+  }
+
   function stylesheet(doc) {
     const page = doc.page || model.PAGE.A4;
     const m = model.margins(page);
@@ -150,6 +180,7 @@ img { max-width: 100%; height: auto; }
 figcaption { font-size: 9pt; color: #666; margin-top: 3pt; }
 hr { border: 0; border-top: 0.5pt solid #ccc; margin: 12pt 0; }
 .pagebreak { break-after: page; page-break-after: always; height: 0; }
+${stylesCss(doc.styles)}
 `.trim();
   }
 
@@ -211,5 +242,5 @@ hr { border: 0; border-top: 0.5pt solid #ccc; margin: 12pt 0; }
     return { displayHeaderFooter: true, headerTemplate: header, footerTemplate: footer };
   }
 
-  return { pdfHeaderFooter, docToHtml, blockToHtml, runsToHtml, stylesheet, htmlToText, esc, escAttr };
+  return { stylesCss, pdfHeaderFooter, docToHtml, blockToHtml, runsToHtml, stylesheet, htmlToText, esc, escAttr };
 });

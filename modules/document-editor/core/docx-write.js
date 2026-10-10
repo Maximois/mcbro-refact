@@ -71,8 +71,12 @@
   function runProps(props) {
     if (!props) return '';
     let out = '<w:rPr>';
-    const family = props.font ? X(String(props.font)) : 'Calibri';
-    out += `<w:rFonts w:ascii="${family}" w:hAnsi="${family}" w:cs="${family}"/>`;
+    // Sin fuente propia no se escribe rFonts: asi manda el estilo del documento
+    // (Normal / Heading) y, por defecto, Calibri de docDefaults.
+    if (props.font) {
+      const family = X(String(props.font));
+      out += `<w:rFonts w:ascii="${family}" w:hAnsi="${family}" w:cs="${family}"/>`;
+    }
     if (props.bold === true) out += '<w:b/><w:bCs/>';
     else if (props.bold === false) out += '<w:b w:val="0"/><w:bCs w:val="0"/>';
     if (props.italic === true) out += '<w:i/><w:iCs/>';
@@ -360,26 +364,57 @@
       rels.join('') + '</Relationships>';
   }
 
-  function styles() {
+  // rPr/pPr de un estilo del documento sobre el estilo base de Word.
+  function styleOverride(st, base) {
+    if (!st) return base;
+    const b = Object.assign({}, base, st);
+    let ppr = base.pPr || '';
+    if (st.lineHeight) {
+      const line = Math.round(Number(st.lineHeight) * 240);
+      ppr = /<w:spacing /.test(ppr) ? ppr.replace('<w:spacing ', `<w:spacing w:line="${line}" w:lineRule="auto" `) : ppr + `<w:spacing w:line="${line}" w:lineRule="auto"/>`;
+    }
+    if (st.align && st.align !== 'left') {
+      const jc = `<w:jc w:val="${{ center: 'center', right: 'right', justify: 'both' }[st.align]}"/>`;
+      // El esquema pide jc antes de outlineLvl.
+      ppr = ppr.includes('<w:outlineLvl') ? ppr.replace('<w:outlineLvl', jc + '<w:outlineLvl') : ppr + jc;
+    }
+    const fam = st.font ? X(String(st.font)) : null;
+    let rpr = '';
+    if (fam) rpr += `<w:rFonts w:ascii="${fam}" w:hAnsi="${fam}" w:cs="${fam}"/>`;
+    const bold = st.bold !== undefined ? st.bold : base.bold;
+    if (bold === true) rpr += '<w:b/><w:bCs/>'; else if (bold === false) rpr += '<w:b w:val="0"/><w:bCs w:val="0"/>';
+    const it = st.italic !== undefined ? st.italic : base.italic;
+    if (it === true) rpr += '<w:i/><w:iCs/>'; else if (it === false) rpr += '<w:i w:val="0"/><w:iCs w:val="0"/>';
+    const color = st.color ? String(st.color).replace('#', '').slice(0, 6).toUpperCase() : base.color;
+    if (color) rpr += `<w:color w:val="${X(color)}"/>`;
+    const size = st.size ? st.size * 2 : base.size;
+    if (size) rpr += `<w:sz w:val="${size}"/><w:szCs w:val="${size}"/>`;
+    return Object.assign(b, { pPr: ppr, rPr: rpr });
+  }
+
+  function styles(docStyles) {
+    const ds = docStyles || {};
+    const h = (n, base) => styleOverride(ds['heading' + n], base);
+    const h1 = h(1, { pPr: '<w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/>', bold: true, size: 34 });
+    const h2 = h(2, { pPr: '<w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/>', bold: true, size: 28 });
+    const h3 = h(3, { pPr: '<w:keepNext/><w:spacing w:before="160" w:after="80"/><w:outlineLvl w:val="2"/>', bold: true, size: 24 });
+    const q = styleOverride(ds.quote, { pPr: '<w:ind w:left="360"/><w:spacing w:before="80" w:after="80"/>', italic: true, color: '444444' });
+    const normal = ds.paragraph ? styleOverride(ds.paragraph, { pPr: '' }) : null;
+    const normalXml = normal
+      ? `<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/>${normal.pPr ? `<w:pPr>${normal.pPr}</w:pPr>` : ''}${normal.rPr ? `<w:rPr>${normal.rPr}</w:rPr>` : ''}</w:style>`
+      : '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>';
+    const hx = (id, name, o) => `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>` +
+      `<w:pPr>${o.pPr}</w:pPr><w:rPr>${o.rPr || ('<w:b/><w:bCs/>' + `<w:sz w:val="${o.size}"/><w:szCs w:val="${o.size}"/>`)}</w:rPr></w:style>`;
     return XML_HEAD +
       `<w:styles ${NS}>` +
       '<w:docDefaults><w:rPrDefault><w:rPr>' +
       '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/>' +
       '<w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="es-ES"/>' +
       '</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="120" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>' +
-      '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>' +
-      '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>' +
-      '<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr>' +
-      '<w:rPr><w:b/><w:bCs/><w:sz w:val="34"/><w:szCs w:val="34"/></w:rPr></w:style>' +
-      '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>' +
-      '<w:pPr><w:keepNext/><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr>' +
-      '<w:rPr><w:b/><w:bCs/><w:sz w:val="28"/><w:szCs w:val="28"/></w:rPr></w:style>' +
-      '<w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>' +
-      '<w:pPr><w:keepNext/><w:spacing w:before="160" w:after="80"/><w:outlineLvl w:val="2"/></w:pPr>' +
-      '<w:rPr><w:b/><w:bCs/><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>' +
+      normalXml +
+      hx('Heading1', 'heading 1', h1) + hx('Heading2', 'heading 2', h2) + hx('Heading3', 'heading 3', h3) +
       '<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:qFormat/>' +
-      '<w:pPr><w:ind w:left="360"/><w:spacing w:before="80" w:after="80"/></w:pPr>' +
-      '<w:rPr><w:i/><w:iCs/><w:color w:val="444444"/></w:rPr></w:style>' +
+      `<w:pPr>${q.pPr}</w:pPr><w:rPr>${q.rPr}</w:rPr></w:style>` +
       '<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:qFormat/>' +
       '<w:pPr><w:ind w:left="720"/><w:contextualSpacing/></w:pPr></w:style>' +
       '</w:styles>';
@@ -517,7 +552,7 @@
       { name: 'docProps/core.xml', data: coreProps(doc) },
       { name: 'docProps/app.xml', data: appProps(doc) },
       { name: 'word/_rels/document.xml.rels', data: documentRels(ctx) },
-      { name: 'word/styles.xml', data: styles() },
+      { name: 'word/styles.xml', data: styles(doc.styles) },
       { name: 'word/document.xml', data: document }
     ];
     if (ctx.hasLists) parts.push({ name: 'word/numbering.xml', data: numbering() });

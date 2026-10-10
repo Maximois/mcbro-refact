@@ -428,7 +428,9 @@ const merged = texts.map(t => {
       italic: m.italic || undefined,
       underline: m.underline || undefined,
       color: m.color || undefined,
-      size: m.size || undefined
+      // 11 pt es el tamano base del cuerpo: guardarlo en cada parrafo no aporta
+      // y cambiaria el hash del documento al reabrirlo.
+      size: (m.size && m.size !== 11) ? m.size : undefined
     }));
     return blocks;
   }

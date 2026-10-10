@@ -159,3 +159,82 @@ describe('dom-runs: enlaces', () => {
     assert.ok(!runs.some(r => /mal/.test(r.text) && r.link), 'el enlace peligroso no se conserva');
   });
 });
+
+describe('hito 4: documento completo y estilos', () => {
+  const run = (d, ops) => patch.applyPatch(d, { expectedHash: d.hash, ops });
+  const empty = () => model.createDoc({ blocks: [] });
+
+  test('insertBlocks arma un documento entero en un parche', () => {
+    const r = run(empty(), [
+      { op: 'setTitle', title: 'Informe mensual' },
+      { op: 'page', margin: 'wide', pageNumbers: 'center' },
+      { op: 'styles', set: { heading1: { size: 20, color: '#1a3c6e' } } },
+      { op: 'insertBlocks', blocks: [
+        { type: 'heading', level: 1, text: 'Resumen' },
+        { type: 'paragraph', text: 'Todo bien.' },
+        { type: 'list', items: ['uno', 'dos'], ordered: true },
+        { type: 'table', rows: [['a', 'b'], ['1', '2']] }
+      ] }
+    ]);
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    assert.equal(r.doc.blocks.length, 4);
+    assert.equal(r.doc.title, 'Informe mensual');
+    assert.deepEqual(r.doc.styles, { heading1: { size: 20, color: '#1a3c6e' } });
+    assert.equal(r.doc.page.pageNumbers, 'center');
+  });
+  test('insertBlocks en una posicion y por ancla', () => {
+    const d = model.createDoc({ blocks: [{ type: 'paragraph', text: 'inicio' }, { type: 'paragraph', text: 'fin' }] });
+    const r = run(d, [{ op: 'insertBlocks', after: 'inicio', blocks: [{ type: 'paragraph', text: 'A' }, { type: 'paragraph', text: 'B' }] }]);
+    assert.deepEqual(r.doc.blocks.map(b => b.text), ['inicio', 'A', 'B', 'fin']);
+    assert.deepEqual(run(d, [{ op: 'insertBlocks', index: 0, blocks: [{ type: 'paragraph', text: 'Z' }] }]).doc.blocks.map(b => b.text), ['Z', 'inicio', 'fin']);
+  });
+  test('insertBlocks es todo o nada y dice cual bloque fallo', () => {
+    const r = run(empty(), [{ op: 'insertBlocks', blocks: [{ type: 'paragraph', text: 'ok' }, { type: 'image', src: 'http://x/y.png' }] }]);
+    assert.equal(r.ok, false);
+    assert.match(r.errors[0].message, /bloque 1/);
+    assert.equal(run(empty(), [{ op: 'insertBlocks', blocks: [] }]).ok, false);
+    assert.equal(run(empty(), [{ op: 'insertBlocks', blocks: new Array(501).fill({ type: 'paragraph', text: 'x' }) }]).ok, false);
+  });
+  test('styles: mezcla, quita propiedades con null, clear', () => {
+    let d = run(empty(), [{ op: 'styles', set: { heading1: { size: 20 }, paragraph: { lineHeight: 1.5 } } }]).doc;
+    d = run(d, [{ op: 'styles', set: { heading1: { color: '#112233', size: null } } }]).doc;
+    assert.deepEqual(d.styles.heading1, { color: '#112233' });
+    d = run(d, [{ op: 'styles', clear: ['paragraph'] }]).doc;
+    assert.equal(d.styles.paragraph, undefined);
+    d = run(d, [{ op: 'styles', clear: 'all' }]).doc;
+    assert.equal(d.styles, undefined);
+  });
+  test('styles: valores invalidos y claves desconocidas', () => {
+    assert.equal(run(empty(), [{ op: 'styles', set: { titulo: { size: 10 } } }]).ok, false);
+    assert.equal(run(empty(), [{ op: 'styles', set: { heading1: { size: 'enorme', color: 'rojo' } } }]).ok, false);
+    assert.equal(run(empty(), [{ op: 'styles' }]).ok, false);
+  });
+  test('el hash ahora cambia con el formato, la pagina y los estilos', () => {
+    const d = model.createDoc({ blocks: [{ id: 'p', type: 'paragraph', text: 'x' }] });
+    const h = (ops) => run(d, ops).doc.hash;
+    const hashes = new Set([d.hash, h([{ op: 'style', find: 'x', lineHeight: 2 }]), h([{ op: 'page', orientation: 'landscape' }]), h([{ op: 'styles', set: { paragraph: { size: 12 } } }])]);
+    assert.equal(hashes.size, 4);
+  });
+  test('DOCX: los estilos van a styles.xml y los parrafos no fijan fuente', () => {
+    const d = model.createDoc({ styles: { heading1: { font: 'Georgia', size: 20, color: '#1a3c6e', align: 'center' }, paragraph: { font: 'Arial', lineHeight: 1.5 } },
+      blocks: [{ type: 'heading', level: 1, text: 'T' }, { type: 'paragraph', text: 'cuerpo' }] });
+    const { parts } = docxWrite.docToDocxParts(d, {});
+    const st = parts.find(p => p.name === 'word/styles.xml').data;
+    xml.parse(st);
+    assert.match(st, /w:styleId="Heading1"[\s\S]*Georgia[\s\S]*w:val="40"/);
+    assert.match(st, /w:styleId="Normal"[\s\S]*Arial/);
+    assert.ok(st.indexOf('<w:jc w:val="center"/>') < st.indexOf('<w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:rFonts'), 'jc antes de outlineLvl');
+    const body = parts.find(p => p.name === 'word/document.xml').data;
+    assert.ok(!/Calibri/.test(body), 'el cuerpo no fija Calibri en cada tramo');
+  });
+  test('HTML/PDF: reglas de estilo, y el bloque con formato propio gana', () => {
+    const d = model.createDoc({ styles: { heading1: { color: '#1a3c6e', size: 20 } }, blocks: [{ type: 'heading', level: 1, text: 'T', color: '#ff0000' }] });
+    const css = html.stylesheet(d);
+    assert.match(css, /h1 \{[^}]*font-size: 20pt[^}]*color: #1a3c6e/);
+    assert.match(html.blockToHtml(d.blocks[0]), /style="[^"]*color:#ff0000/);
+  });
+  test('un documento sin estilos no lleva el campo (hash estable)', () => {
+    assert.equal('styles' in model.createDoc({ blocks: [] }), false);
+    assert.equal('styles' in model.createDoc({ styles: { heading1: { size: 'x' } }, blocks: [] }), false);
+  });
+});

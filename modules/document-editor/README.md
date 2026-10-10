@@ -171,6 +171,20 @@ Exportación: el DOCX escribe y lee márgenes por lado, orientación, encabezado
 
 Diálogos: no se usan `confirm/prompt/alert` nativos (en Electron/Windows dejaban la página sin foco al cerrarse); hay un diálogo propio (`modal`), y borrar un bloque ofrece *Deshacer* en vez de preguntar.
 
+## Documento completo y estilos (la IA redacta)
+
+Para redactar un documento nuevo la IA manda **un** parche: `setTitle`, `page`, `styles` e `insertBlocks`.
+```json
+{ "op":"insertBlocks", "index":0, "blocks":[ {"type":"heading","level":1,"text":"..."}, {"type":"paragraph","text":"..."} ] }   // hasta 500, todo o nada; también "after"/"before"
+{ "op":"styles", "set":{ "heading1":{"font":"Georgia","size":20,"color":"#1a3c6e","bold":true,"align":"left"}, "paragraph":{"lineHeight":1.5} }, "clear":["quote"] }   // clear:"all" los quita
+```
+Estilos (`doc.styles`): `heading1-3`, `paragraph`, `quote`, `code`, cada uno con `font`, `size` (pt), `color`, `bold`, `italic`, `align`, `lineHeight`. Un bloque con una propiedad propia gana sobre el estilo. Se aplican en el editor, en el HTML/PDF (`stylesCss`) y en el DOCX (`word/styles.xml`: Normal, Heading1-3 y Quote). UI: **📌 Fijar estilo** toma el formato del bloque seleccionado y lo convierte en el estilo de su tipo (como "actualizar estilo" de Word); **Sin estilos** los quita.
+
+Cambios de fondo que conviene conocer:
+- El hash del documento ahora incluye todo el formato de los bloques, la página y los estilos; antes un parche viejo no fallaba si solo había cambiado el formato.
+- El DOCX ya no escribe Calibri en cada tramo: manda el estilo del documento. El lector ignora el tamaño 11 pt de un párrafo (es el base).
+- Limitación: al reabrir un DOCX, los estilos se leen como formato propio de cada bloque, no como `doc.styles`.
+
 ## Seguridad
 
 - Solo se tocan archivos concedidos: los que el usuario eligió con un diálogo,

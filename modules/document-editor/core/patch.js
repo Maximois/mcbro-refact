@@ -43,7 +43,7 @@
 
   const OP_KINDS = [
     'replace', 'insert', 'delete', 'style', 'replaceBlock', 'deleteBlock',
-    'setTitle', 'setMeta', 'find', 'table', 'image', 'page'
+    'setTitle', 'setMeta', 'find', 'table', 'image', 'page', 'insertBlocks', 'styles'
   ];
 
   /** Descripcion del formato, para incrustar en el prompt del asistente. */
@@ -57,6 +57,8 @@
     '  { "op":"insert",  "index":0, "block":{"type":"heading","level":1,"text":"Titulo"} }',
     '  { "op":"delete",  "find":"texto exacto", "all":false }',
     '  { "op":"style",   "find":"texto", "link":"https://...", "bold":true, "italic":false, "underline":false, "align":"center", "size":14, "color":"#333333" }',
+    '  { "op":"insertBlocks", "index":0, "blocks":[ ...hasta 500 bloques... ] }   // o "after"/"before"; todo o nada',
+    '  { "op":"styles", "set":{"heading1":{"font":"Georgia","size":20,"color":"#1a3c6e","bold":true,"align":"left"},"paragraph":{"lineHeight":1.5}}, "clear":["quote"] }',
     '  { "op":"replaceBlock", "id":"b12", "block":{"type":"paragraph","text":"..."} }',
     '  { "op":"deleteBlock", "id":"b12" }',
     '  { "op":"table", "id":"b5", "action":"addRow|deleteRow|addCol|deleteCol", "index":1, "where":"after" }   // index 0-based; where before|after',
@@ -74,6 +76,12 @@
     '- SIEMPRE responde primero con doc:read y usa texto copiado de ahi, nunca de memoria.',
     '- Un parche por cambio logico. Si algo falla, el parche entero se descarta.',
     '- Nunca intentes reescribir el documento completo: no hay operacion para eso.',
+    '- Para REDACTAR un documento nuevo (o un capitulo) usa UN parche: setTitle, page, styles',
+    '  e insertBlocks con todos los bloques. Un titulo y la estructura (heading 1-3, listas,',
+    '  tablas) valen mas que texto con formato bloque a bloque.',
+    '- "styles" define el formato por defecto de heading1-3, paragraph, quote y code',
+    '  (font, size en pt, color #rrggbb, bold, italic, align, lineHeight). Un bloque con una',
+    '  propiedad propia gana sobre el estilo. Prefierelo a repetir size/color en cada bloque.',
     '- "style" con bold/italic/underline/color/size marca SOLO el fragmento dentro de',
     '  parrafos y titulos. En listas y tablas el estilo se aplica al elemento entero.',
     '- Si despues de un "style" hacés un "replace" sobre el mismo parrafo, el texto se',
@@ -389,26 +397,79 @@
     return runs.length ? runs : [{ text }];
   }
 
+  /** Posicion de insercion segun index / after / before (o al final). */
+  function insertPosition(state, op, index) {
+    if (Number.isInteger(op.index)) return { at: Math.max(0, Math.min(state.doc.blocks.length, op.index)) };
+    if (op.after != null || op.before != null) {
+      const anchor = String(op.after != null ? op.after : op.before);
+      const hits = locate(state.doc, anchor, { caseSensitive: op.caseSensitive });
+      if (!hits.length) return { error: err(index, 'NOT_FOUND', `ancla no encontrada: ${truncate(anchor, 60)}`) };
+      if (hits.length > 1) {
+        return { error: err(index, 'AMBIGUOUS', `ancla ambigua (${hits.length} coincidencias)`, { occurrences: hits.length }) };
+      }
+      return { at: op.after != null ? hits[0].blockIndex + 1 : hits[0].blockIndex };
+    }
+    return { at: state.doc.blocks.length };
+  }
+
   function opInsert(state, op, index) {
     const block = model.normalizeBlock(op.block);
     if (!block) return err(index, 'INVALID', 'insert sin "block" valido', { block: op.block || null });
+    const pos = insertPosition(state, op, index);
+    if (pos.error) return pos.error;
+    state.doc.blocks.splice(pos.at, 0, block);
+    return { diffs: [{ op: 'insert', index: pos.at, id: block.id, before: '', after: describeTarget(block) }], count: 1 };
+  }
 
-    let at = -1;
-    if (Number.isInteger(op.index)) {
-      at = Math.max(0, Math.min(state.doc.blocks.length, op.index));
-    } else if (op.after != null || op.before != null) {
-      const anchor = String(op.after != null ? op.after : op.before);
-      const hits = locate(state.doc, anchor, { caseSensitive: op.caseSensitive });
-      if (!hits.length) return err(index, 'NOT_FOUND', `ancla no encontrada: ${truncate(anchor, 60)}`);
-      if (hits.length > 1) {
-        return err(index, 'AMBIGUOUS', `ancla ambigua (${hits.length} coincidencias)`, { occurrences: hits.length });
-      }
-      at = op.after != null ? hits[0].blockIndex + 1 : hits[0].blockIndex;
-    } else {
-      at = state.doc.blocks.length;
+  // Varios bloques de una vez: es lo que usa la IA para redactar un documento
+  // completo (o un capitulo) sin mandar cientos de "insert". Todo o nada: un
+  // bloque invalido descarta la operacion y dice cual era.
+  const MAX_BLOCKS_PER_OP = 500;
+  function opInsertBlocks(state, op, index) {
+    const list = Array.isArray(op.blocks) ? op.blocks : null;
+    if (!list || !list.length) return err(index, 'INVALID', 'insertBlocks sin "blocks"');
+    if (list.length > MAX_BLOCKS_PER_OP) return err(index, 'INVALID', `insertBlocks admite hasta ${MAX_BLOCKS_PER_OP} bloques`);
+    const blocks = [];
+    for (let i = 0; i < list.length; i++) {
+      const b = model.normalizeBlock(list[i]);
+      if (!b) return err(index, 'INVALID', `insertBlocks: el bloque ${i} no es valido`, { block: list[i] || null });
+      blocks.push(b);
     }
-    state.doc.blocks.splice(at, 0, block);
-    return { diffs: [{ op: 'insert', index: at, id: block.id, before: '', after: describeTarget(block) }], count: 1 };
+    const pos = insertPosition(state, op, index);
+    if (pos.error) return pos.error;
+    state.doc.blocks.splice(pos.at, 0, ...blocks);
+    return {
+      diffs: blocks.map((b, i) => ({ op: 'insert', index: pos.at + i, id: b.id, before: '', after: describeTarget(b) })),
+      count: blocks.length
+    };
+  }
+
+  // Estilos del documento: set mezcla propiedades por tipo (una propiedad en
+  // null se quita); clear borra estilos sueltos o "all".
+  function opStyles(state, op, index) {
+    if (op.set == null && op.clear == null) return err(index, 'INVALID', 'styles sin "set" ni "clear"', { keys: model.STYLE_KEYS });
+    const cur = Object.assign({}, state.doc.styles || {});
+    const before = JSON.stringify(cur);
+    if (op.clear === 'all') { for (const k of Object.keys(cur)) delete cur[k]; }
+    else if (Array.isArray(op.clear)) {
+      for (const k of op.clear) {
+        if (!model.STYLE_KEYS.includes(k)) return err(index, 'INVALID', `estilo desconocido: ${k}`, { keys: model.STYLE_KEYS });
+        delete cur[k];
+      }
+    }
+    if (op.set != null) {
+      if (typeof op.set !== 'object') return err(index, 'INVALID', 'styles.set debe ser un objeto');
+      for (const k of Object.keys(op.set)) {
+        if (!model.STYLE_KEYS.includes(k)) return err(index, 'INVALID', `estilo desconocido: ${k}`, { keys: model.STYLE_KEYS });
+        const merged = Object.assign({}, cur[k] || {}, op.set[k]);
+        for (const p of Object.keys(merged)) if (merged[p] === null) delete merged[p];
+        const clean = model.normalizeStyles({ [k]: merged });
+        if (Object.keys(merged).length && !clean) return err(index, 'INVALID', `styles.set.${k}: ninguna propiedad valida`, { allowed: ['font', 'size', 'color', 'bold', 'italic', 'align', 'lineHeight'] });
+        if (clean) cur[k] = clean[k]; else delete cur[k];
+      }
+    }
+    if (Object.keys(cur).length) state.doc.styles = cur; else delete state.doc.styles;
+    return { diffs: [{ op: 'styles', before, after: JSON.stringify(cur) }], count: 1 };
   }
 
   function opReplaceBlock(state, op, index) {
@@ -590,6 +651,8 @@
           case 'table': res = opTable(state, op, i); break;
           case 'image': res = opImage(state, op, i); break;
           case 'page': res = opPage(state, op, i); break;
+          case 'insertBlocks': res = opInsertBlocks(state, op, i); break;
+          case 'styles': res = opStyles(state, op, i); break;
           case 'setTitle': res = opSetTitle(state, op, i); break;
           case 'setMeta': res = opSetMeta(state, op, i); break;
           case 'find': res = opFind(state, op, i); break;

@@ -32,7 +32,7 @@ const read = (...p) => fs.readFileSync(path.join(CORE, ...p), 'utf8');
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
-async function boot(blocks, page) {
+async function boot(blocks, page, styles) {
   const dom = new JSDOM(
     '<!doctype html><body><div id="topnav"></div><div id="panel-doc" class="active"><div id="doc-host"></div></div></body>',
     { runScripts: 'outside-only', pretendToBeVisual: true }
@@ -40,7 +40,7 @@ async function boot(blocks, page) {
   const w = dom.window;
 
   // Estado del "main": un documento y el mismo aplicador de parches que usa el main real.
-  const server = { doc: model.createDoc({ blocks, page }), edits: [] };
+  const server = { doc: model.createDoc({ blocks, page, styles }), edits: [] };
   const snapshot = () => ({
     open: true, doc: server.doc, sourcePath: '', sourceName: '', format: 'docx', dirty: true,
     pages: [], pageCount: 0, warnings: [], savedFormat: 'docx',
@@ -496,5 +496,42 @@ describe('renderer: pagina, parrafo, enlaces y zoom (hito 3)', () => {
     await click(w, w.document.querySelector('[data-block-indent="1"]'));
     assert.equal(server.doc.blocks[0].indent, 1);
     assert.equal(w.document.querySelector('.doc-paper-stack').style.zoom, '1.5');
+  });
+});
+
+describe('renderer: estilos del documento (hito 4)', () => {
+  withDom('Fijar estilo: el formato del titulo pasa a todos los titulos 1 y el bloque lo hereda', async () => {
+    const { w, server } = await boot([
+      { id: 'h1', type: 'heading', level: 1, text: 'Uno', size: 22, color: '#1a3c6e', align: 'center' },
+      { id: 'h2', type: 'heading', level: 1, text: 'Dos' },
+      { id: 'p', type: 'paragraph', text: 'cuerpo', size: 13 }
+    ]);
+    surfaces(w)[0].dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    await click(w, w.document.querySelector('[data-style-save]'));
+    assert.deepEqual(plain(server.doc.styles), { heading1: { size: 22, color: '#1a3c6e', align: 'center' } });
+    const [a, b, c] = server.doc.blocks;
+    assert.equal(a.size, undefined); assert.equal(a.color, undefined); assert.equal(a.align, undefined);
+    assert.equal(c.size, 13, 'otros tipos no se tocan');
+    const css = w.document.getElementById('doc-doc-styles').textContent;
+    assert.match(css, /\.doc-b h1\.doc-ce \{[^}]*font-size: 22pt/);
+    assert.ok(b && a.text === 'Uno');
+  });
+
+  withDom('Fijar estilo sin formato propio avisa y no cambia nada', async () => {
+    const { w, server } = await boot([{ id: 'p', type: 'paragraph', text: 'sin formato' }]);
+    surfaces(w)[0].dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true }));
+    await tick();
+    await click(w, w.document.querySelector('[data-style-save]'));
+    assert.equal(server.doc.styles, undefined);
+    assert.match(w.document.querySelector('#doc-toast').textContent, /no tiene formato propio/);
+  });
+
+  withDom('Sin estilos los quita', async () => {
+    const { w, server } = await boot([{ id: 'p', type: 'paragraph', text: 'x' }], undefined, { paragraph: { size: 12 } });
+    assert.match(w.document.getElementById('doc-doc-styles').textContent, /font-size: 12pt/);
+    await click(w, w.document.querySelector('[data-style-reset]'));
+    assert.equal(server.doc.styles, undefined);
+    assert.equal(w.document.getElementById('doc-doc-styles').textContent, '');
   });
 });
