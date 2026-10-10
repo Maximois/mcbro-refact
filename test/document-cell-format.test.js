@@ -53,3 +53,22 @@ describe('overlays', () => {
     assert.equal(table.cellRuns['1,1'][0].color.toLowerCase(), '#ff0000');
   });
 });
+
+describe('bloques vacios', () => {
+  test('un titulo vacio es valido (replaceBlock al borrar el texto del titulo)', () => {
+    const patch = require(D + 'patch');
+    const d = model.createDoc({ blocks: [{ id: 'h', type: 'heading', level: 1, text: 'Documento nuevo' }, { type: 'paragraph', text: '' }] });
+    d.hash = model.hashDoc(d);
+    const r = patch.applyPatch(d, { expectedHash: d.hash, ops: [{ op: 'replaceBlock', id: 'h', block: { type: 'heading', level: 1, text: '' } }] });
+    assert.equal(r.ok, true);
+    assert.equal(r.doc.blocks[0].text, '');
+    assert.equal(r.doc.blocks[0].type, 'heading');
+  });
+  test('una lista con todos los items vacios conserva uno en blanco', () => {
+    const d = model.createDoc({ blocks: [{ type: 'list', items: ['', '  '] }] });
+    assert.deepEqual(plain(d.blocks[0].items), ['']);
+  });
+  test('una lista sin items sigue siendo invalida', () => {
+    assert.equal(model.createDoc({ blocks: [{ type: 'list', items: [] }] }).blocks.length, 0);
+  });
+});

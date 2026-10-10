@@ -163,7 +163,9 @@
       const t = blockText(raw);
       if (Array.isArray(raw.runs)) block.runs = raw.runs.map(normalizeRun).filter(Boolean);
       else block.text = t;
-      if (!block.text && !block.runs) return null;
+      // Un titulo vacio es valido (como un parrafo vacio): es lo que queda al
+      // borrar el texto del titulo y sigue siendo un bloque donde escribir.
+      if (block.runs && !block.runs.length) { delete block.runs; block.text = ''; }
     } else if (type === 'list') {
       const rawItems = Array.isArray(raw.items) ? raw.items : String(raw.text || '').split('\n');
       const items = [];
@@ -174,6 +176,8 @@
         items.push(text);
         itemRuns.push(richRunsFor(Array.isArray(raw.itemRuns) ? raw.itemRuns[i] : null, text, true));
       });
+      // Todos los items vacios: queda uno en blanco para poder seguir escribiendo.
+      if (!items.length && rawItems.length) { items.push(''); itemRuns.push(null); }
       if (!items.length) return null;
       block.items = items;
       if (itemRuns.some(Boolean)) block.itemRuns = itemRuns;
