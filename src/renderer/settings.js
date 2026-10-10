@@ -86,14 +86,11 @@ async function unblockCosmeticRule(rule) {
 async function unblockAllCosmeticRules() {
   const rules = Array.isArray(state.cfg?.userCosmeticRules) ? [...state.cfg.userCosmeticRules] : [];
   if (!rules.length) return;
-  let removed = 0;
-  for (const rule of rules) {
-    const r = await mc.adblockRemoveCosmetic({ raw: rule });
-    if (r?.ok) removed++;
-  }
+  const r = await mc.adblockRemoveCosmetics(rules);
+  const removed = (r && typeof r.removed === 'number') ? r.removed : rules.length;
   state.cfg.userCosmeticRules = [];
   renderCosmeticRules();
-  addSidebarLog('allowed', '[ELEMENT] Desbloqueados ' + removed + ' elemento(s)');
+  addSidebarLog('allowed', '[ELEMENT] Desbloqueados ' + (removed || 0) + ' elemento(s)');
   const wv = $('webview-' + state.activeTab);
   reloadTab(state.activeTab);
 }
@@ -559,7 +556,7 @@ async function clearCache()   {
   else addSidebarLog('blocked', '[CACHE] no se pudo limpiar: ' + (result?.error || 'error desconocido'));
 }
 async function clearAll() {
-  if (!confirm('Borrar TODOS los datos (cookies, caché, storage, stats)?')) return;
+  if (!await mcDialog.confirm('Borrar TODOS los datos (cookies, caché, storage, stats)?', { ok: 'Borrar todo', danger: true })) return;
   const result = await mc.clearAll().catch(error => ({ ok: false, error: error?.message || 'error desconocido' }));
   if (!result?.ok) {
     addSidebarLog('blocked', '[CLEAR] no se pudieron borrar todos los datos: ' + (result?.error || 'error desconocido'));

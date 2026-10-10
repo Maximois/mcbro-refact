@@ -39,6 +39,12 @@
     toast: null
   };
 
+  // id -> ultimo src completo de imagen que viajo por el parche. El main manda
+  // los bytes una sola vez (cuando la imagen es nueva); despues los omite para
+  // no congelar el IPC y aca se completa el markup con lo que ya tenemos.
+  const imgSrc = new Map();
+  let _imgRefetching = false;
+
   const esc = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -436,8 +442,13 @@ function ensureTab() {
     await flushPending();
     const current = (ui.snap.doc.blocks || []).find((block) => block.id === id);
     if (!current) return;
-    const next = update(current);
+    let next = update(current);
     if (!next) return;
+    // El main manda las imagenes sin `src` cuando no cambiaron: si se reenvia
+    // el bloque tal cual (p.ej. al cambiarle el ancho) se perderia la imagen.
+    if (current.type === 'image' && next.type === 'image' && !next.src) {
+      next = Object.assign({}, next, { src: imgSrc.has(id) ? imgSrc.get(id) : '' });
+    }
     const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'replaceBlock', id, block: next }] });
     if (res && res.ok) { applySnapshot(res); select(id); scheduleAutoSave(); }
     else if (res && res.error) toast(res.error, 'error');
@@ -834,7 +845,9 @@ function ensureTab() {
     const block = selectedBlock();
     if (!block || !ui.snap) return;
     const label = blockText(block).trim().slice(0, 80) || block.type;
-    if (!window.confirm('¿Eliminar este bloque?\n\n' + label)) return;
+    if (typeof mcDialog !== 'undefined') {
+      if (!await mcDialog.confirm('¿Eliminar este bloque?\n\n' + label, { ok: 'Eliminar', danger: true })) return;
+    } else if (!window.confirm('¿Eliminar este bloque?\n\n' + label)) return;
     await flushPending();
     const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'deleteBlock', id: block.id }] });
     if (res && res.ok) applySnapshot(res);
@@ -850,11 +863,23 @@ function ensureTab() {
 
   async function findAndReplace() {
     await flushPending();
-    const find = window.prompt('Buscar texto en el documento:');
+    let find;
+    if (typeof mcDialog !== 'undefined') {
+      find = await mcDialog.prompt('Buscar texto en el documento:');
+    } else {
+      find = window.prompt('Buscar texto en el documento:');
+    }
     if (!find) return;
-    const replace = window.prompt('Reemplazar por:', '');
+    let replace;
+    if (typeof mcDialog !== 'undefined') {
+      replace = await mcDialog.prompt('Reemplazar por:', '');
+    } else {
+      replace = window.prompt('Reemplazar por:', '');
+    }
     if (replace == null) return;
-    if (!window.confirm('Reemplazar todas las coincidencias de «' + find + '»?')) return;
+    if (typeof mcDialog !== 'undefined') {
+      if (!await mcDialog.confirm('Reemplazar todas las coincidencias de «' + find + '»?')) return;
+    } else if (!window.confirm('Reemplazar todas las coincidencias de «' + find + '»?')) return;
     const res = await API.docEdit({ expectedHash: ui.snap?.doc?.hash, ops: [
       { op: 'replace', find, replace, all: true, caseSensitive: false }
     ] });
@@ -868,9 +893,14 @@ function ensureTab() {
     if (res && res.error) { toast(res.error, 'error'); return; }
     const stats = res && res.stats;
     if (!stats) return;
-    window.alert('Palabras: ' + stats.words + '\nCaracteres: ' + stats.chars +
+    const msg = 'Palabras: ' + stats.words + '\nCaracteres: ' + stats.chars +
       '\nBloques: ' + stats.blocks + '\nTítulos: ' + stats.headings +
-      '\nTablas: ' + stats.tables + '\nImágenes: ' + stats.images + '\nPáginas: ' + stats.pages);
+      '\nTablas: ' + stats.tables + '\nImágenes: ' + stats.images + '\nPáginas: ' + stats.pages;
+    if (typeof mcDialog !== 'undefined') {
+      await mcDialog.alert(msg);
+    } else {
+      window.alert(msg);
+    }
   }
 
   // ── Contenido ──────────────────────────────────────────────────────────
@@ -907,8 +937,12 @@ function ensureTab() {
       return out + '</table>';
     }
     if (b.type === 'image') {
+      // El main omite el `src` (megabytes) cuando la imagen no cambio desde el
+      // ultimo parche; aca se completa con la ultima copia que si viajo, sin
+      // volver a re-decodificar nada (los nodos se reutilizan igual).
+      const src = b.src || (imgSrc.has(b.id) ? imgSrc.get(b.id) : '');
       const w = Number(b.width) > 0 ? ' style="width:' + Number(b.width) + 'px"' : '';
-      return '<span class="doc-img-wrap"' + w + '><img class="doc-img" src="' + esc(b.src || '') + '" alt="' +
+      return '<span class="doc-img-wrap"' + w + '><img class="doc-img" src="' + esc(src) + '" alt="' +
         esc(b.alt || '') + '" draggable="false"><span class="doc-img-handle" data-img-handle></span></span>';
     }
     if (b.type === 'pagebreak' || b.type === 'hr') return '';
@@ -959,21 +993,33 @@ function ensureTab() {
 
   function layoutPaperPages(stack, blocks, nodes, page) {
     stack.replaceChildren();
+    const heights = ui._blockHeights;
     let content = createPaperPage(stack, page, 1);
+    let used = 0;
+    const avail = content.clientHeight || 1;
     for (const block of blocks) {
       if (block.type === 'pagebreak') {
-        if (content.childElementCount) content = createPaperPage(stack, page, stack.children.length + 1);
+        if (content.childElementCount) { content = createPaperPage(stack, page, stack.children.length + 1); used = 0; }
         continue;
       }
       const node = nodes.get(block.id);
       if (!node) continue;
-      content.appendChild(node);
-      node.querySelectorAll('.doc-t').forEach(autosize);
-      if (content.childElementCount > 1 && content.scrollHeight > content.clientHeight + 1) {
-        content.removeChild(node);
-        content = createPaperPage(stack, page, stack.children.length + 1);
+      let h = heights.get(block.id);
+      if (h == null) {
+        // Bloque recien creado o cambiado: medir aquí una sola vez. Para los
+        // cientos de bloques intactos el alto viene de la cache y no se fuerza
+        // layout, asi el paginado es aritmetica pura (sin O(N^2) de scrollHeight).
         content.appendChild(node);
+        node.querySelectorAll('.doc-t').forEach(autosize);
+        h = node.offsetHeight || 18;
+        heights.set(block.id, h);
       }
+      if (used > 0 && used + (h || 1) > avail) {
+        content = createPaperPage(stack, page, stack.children.length + 1);
+        used = 0;
+      }
+      content.appendChild(node);
+      used += h || 1;
     }
   }
 
@@ -1070,11 +1116,65 @@ function ensureTab() {
     const caret = captureCaret();
     const scrollY = b0.scrollTop;
     const blocks = (snap.doc && snap.doc.blocks) || [];
-    b0.innerHTML = blocks.map((b) =>
-      '<div class="doc-b" data-type="' + esc(b.type) + '" data-level="' + (b.level || '') +
-        '" data-id="' + esc(b.id) + '"' + blockStyle(b) + '>' + blockMarkup(b) + '</div>'
-    ).join('');
-    const nodes = new Map(Array.from(b0.querySelectorAll(':scope > .doc-b')).map(node => [node.dataset.id, node]));
+    // Render incremental: reutiliza los nodos cuyo markup no cambio. Asi editar
+    // un bloque no re-pinta ni re-decodifica los otros miles (y las imagenes
+    // base64 no se vuelven a parsear entero en cada tecla).
+    const token = (snap.open ? '1' : '0') + '|' + (snap.sourcePath || snap.sourceName || '') + '|' + ((blocks[0] && blocks[0].id) || '');
+    if (ui._blockCacheToken !== token) {
+      ui._blockCacheToken = token;
+      if (ui._blockCache) ui._blockCache.clear();
+      if (ui._blockHeights) ui._blockHeights.clear();
+    }
+    const cache = ui._blockCache || (ui._blockCache = new Map());
+    const heights = ui._blockHeights || (ui._blockHeights = new Map());
+    const nodes = new Map();
+    let needImgRefresh = false;
+    for (const b of blocks) {
+      const mark = blockMarkup(b);
+      // `blockStyle` devuelve el fragmento ` style="..."`; se queda con el valor
+      // de adentro, que es lo que acepta setAttribute('style', ...). Si se le
+      // pasaba el fragmento entero, el atributo quedaba inválido y ninguna
+      // alineación/tamaño/color de bloque se aplicaba (p.ej. centrar).
+      const style = (blockStyle(b).match(/\sstyle="([^"]*)"/) || [])[1] || '';
+      if (b.type === 'image' && b.src) imgSrc.set(b.id, b.src);
+      if (b.type === 'image' && !b.src && !imgSrc.has(b.id)) needImgRefresh = true;
+      const hit = cache.get(b.id);
+      let node = null;
+      if (hit && hit.mark === mark && hit.style === style && hit.node && hit.node.isConnected) {
+        node = hit.node;
+      } else {
+        node = document.createElement('div');
+        node.className = 'doc-b';
+        node.dataset.type = b.type;
+        node.dataset.level = b.level || '';
+        node.dataset.id = b.id;
+        if (style) node.setAttribute('style', style);
+        node.innerHTML = mark;
+        cache.set(b.id, { mark, style, node });
+        heights.delete(b.id);
+        if (b.type === 'image') {
+          const img = node.querySelector('img');
+          if (img && !img.complete) img.addEventListener('load', () => {
+            if (ui._blockHeights) ui._blockHeights.delete(b.id);
+            scheduleRepaint();
+          }, { once: true });
+        }
+      }
+      nodes.set(b.id, node);
+    }
+    const live = new Set(blocks.map(b => b.id));
+    for (const id of Array.from(cache.keys())) if (!live.has(id)) cache.delete(id);
+    if (needImgRefresh && !_imgRefetching) {
+      // Un renderer recien cargado puede no conocer una imagen cuyo src el main
+      // ya venia omitiendo: se pide el estado completo una sola vez.
+      _imgRefetching = true;
+      API.docState({}).then((snap) => {
+        _imgRefetching = false;
+        if (!snap || !snap.open || !Array.isArray(snap.doc && snap.doc.blocks)) return;
+        for (const b of snap.doc.blocks) if (b.type === 'image' && b.src) imgSrc.set(b.id, b.src);
+        applySnapshot(snap);
+      }).catch(() => { _imgRefetching = false; });
+    }
     const stack = document.createElement('div');
     stack.className = 'doc-paper-stack';
     b0.replaceChildren(stack);
@@ -1141,6 +1241,12 @@ function ensureTab() {
     renderWarnings();
     if (ui.view === 'pages') renderPages();
     else render();
+  }
+
+  let _repaintTicket = 0;
+  function scheduleRepaint() {
+    const t = ++_repaintTicket;
+    setTimeout(() => { if (t === _repaintTicket) repaint(); }, 16);
   }
 
   function autosize(ta) {

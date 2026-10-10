@@ -393,7 +393,7 @@ const Sessions = {
   async renameCurrent() {
     if (!this.activeId) return;
     const current = this.list.find(s => s.id === this.activeId);
-    const name = prompt('Nuevo nombre:', current?.name || '');
+    const name = await mcDialog.prompt('Nuevo nombre:', current?.name || '');
     if (name === null) return;
     await mc.sessionsRename(this.activeId, name);
     await this.refreshList();
@@ -402,7 +402,7 @@ const Sessions = {
   async deleteCurrent() {
     if (!this.activeId) return;
     const current = this.list.find(s => s.id === this.activeId);
-    if (!confirm(`¿Eliminar la sesión "${current?.name || ''}" y todos sus datos? Esta acción no se puede deshacer.`)) return;
+    if (!await mcDialog.confirm(`¿Eliminar la sesión "${current?.name || ''}" y todos sus datos? Esta acción no se puede deshacer.`, { ok: 'Eliminar', danger: true })) return;
     await mc.sessionsDelete(this.activeId);
     try { localStorage.removeItem(this.storageKey('tabs')); } catch {}
     this.teardownTabs();
@@ -412,7 +412,7 @@ const Sessions = {
 
   async clearData() {
     if (!this.activeId) return;
-    if (!confirm('¿Borrar cookies, caché y datos guardados de esta sesión? Vas a perder el login en los sitios abiertos acá (no afecta al resto del navegador).')) return;
+    if (!await mcDialog.confirm('¿Borrar cookies, caché y datos guardados de esta sesión? Vas a perder el login en los sitios abiertos acá (no afecta al resto del navegador).', { ok: 'Borrar', danger: true })) return;
     const res = await mc.sessionsClearData(this.activeId);
     if (res?.ok && this._wv) { try { this._wv.loadURL('about:blank'); } catch {} }
   },

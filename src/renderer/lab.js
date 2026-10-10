@@ -207,10 +207,10 @@ function labRenderTabs() {
   ).join('') + '<button class="lab-tab-add" onclick="labAddTab()" title="Nueva hoja">+</button>';
 }
 
-function labRenamePrompt(id) {
+async function labRenamePrompt(id) {
   const tab = labTabs.find(t => t.id === id);
   if (!tab) return;
-  const name = prompt('Nombre de la hoja:', tab.name);
+  const name = await mcDialog.prompt('Nombre de la hoja:', tab.name);
   if (name && name.trim()) labRenameTab(id, name.trim());
 }
 
@@ -797,8 +797,8 @@ function labRestoreHistory(idx) {
   runLab();
   labToggleHistory();
 }
-function labClearHistory() {
-  if (!confirm('¿Limpiar todo el historial de trabajos?')) return;
+async function labClearHistory() {
+  if (!await mcDialog.confirm('¿Limpiar todo el historial de trabajos?', { ok: 'Limpiar', danger: true })) return;
   labHistory = [];
   labRenderHistory();
   labSaveState();
