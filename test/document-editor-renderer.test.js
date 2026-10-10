@@ -719,3 +719,37 @@ describe('renderer: vinetas y numeracion conservan el formato', () => {
     assert.deepEqual(plain(b.runs), [{ text: 'Hola ' }, { text: 'mundo', size: 18, font: 'Georgia', color: '#ff0000' }]);
   });
 });
+
+describe('renderer: menu contextual propio', () => {
+  withDom('clic derecho en una celda ofrece las operaciones de tabla y las aplica', async () => {
+    const { w, server } = await boot([{ id: 't', type: 'table', rows: [['a', 'b'], ['c', 'd']] }]);
+    const cell = w.document.querySelector('[data-tr="0"][data-tc="1"]');
+    const ev = new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+    cell.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, true);
+    const menu = w.document.querySelector('#doc-ctxmenu');
+    assert.ok(menu);
+    const item = Array.from(menu.querySelectorAll('.doc-ctx-item')).find((b) => /Insertar fila abajo/.test(b.textContent));
+    assert.ok(item);
+    item.click();
+    await tick(80);
+    assert.deepEqual(plain(server.doc.blocks[0].rows), [['a', 'b'], ['', ''], ['c', 'd']]);
+    assert.equal(w.document.querySelector('#doc-ctxmenu'), null);
+  });
+
+  withDom('convertir desde el menu: parrafo -> titulo', async () => {
+    const { w, server } = await boot([{ id: 'p', type: 'paragraph', text: 'Hola' }]);
+    surfaces(w)[0].dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    Array.from(w.document.querySelectorAll('#doc-ctxmenu .doc-ctx-item')).find((b) => /Título 1/.test(b.textContent)).click();
+    await tick(80);
+    assert.equal(server.doc.blocks[0].type, 'heading');
+  });
+
+  withDom('Escape cierra el menu', async () => {
+    const { w } = await boot([{ id: 'p', type: 'paragraph', text: 'Hola' }]);
+    surfaces(w)[0].dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    assert.ok(w.document.querySelector('#doc-ctxmenu'));
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(w.document.querySelector('#doc-ctxmenu'), null);
+  });
+});

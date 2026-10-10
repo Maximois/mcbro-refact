@@ -215,8 +215,8 @@
 '#' + HOST_ID + ' .doc-format-group:last-child{border:0;padding-right:0;}',
 '#' + HOST_ID + ' .doc-formatbar select{height:27px;padding:3px 6px;background:var(--surface2,#191c24);',
 'color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:4px;font:inherit;font-size:.82rem;}',
-'#' + HOST_ID + ' .doc-objbar{display:none;align-items:center;gap:6px;padding:5px 12px;border-bottom:1px solid var(--border,#2a2f3a);background:var(--surface,#14161c);flex-wrap:wrap;flex-shrink:0;font-size:.82rem;}',
-'#' + HOST_ID + ' .doc-objbar.on{display:flex;}',
+'#' + HOST_ID + ' .doc-objbar{display:flex;visibility:hidden;min-height:38px;box-sizing:border-box;align-items:center;gap:6px;padding:5px 12px;border-bottom:1px solid var(--border,#2a2f3a);background:var(--surface,#14161c);flex-wrap:wrap;flex-shrink:0;font-size:.82rem;}',
+'#' + HOST_ID + ' .doc-objbar.on{visibility:visible;}',
 '#' + HOST_ID + ' .doc-objbar .doc-obj-label{opacity:.7;margin-right:4px;}',
 '#' + HOST_ID + ' .doc-objbar input[type=number],#' + HOST_ID + ' .doc-objbar input[type=text]{height:26px;padding:2px 6px;background:var(--surface2,#191c24);color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:4px;font:inherit;}',
 '#' + HOST_ID + ' .doc-objbar input[type=number]{width:70px;}',
@@ -289,6 +289,14 @@
 '#' + HOST_ID + ' .doc-modal label{display:block;font-size:.82rem;margin-bottom:8px;opacity:.9;}',
 '#' + HOST_ID + ' .doc-modal select,#' + HOST_ID + ' .doc-modal input{display:block;width:100%;margin-top:3px;height:30px;padding:3px 8px;background:var(--surface,#14161c);color:inherit;border:1px solid var(--border,#2a2f3a);border-radius:5px;font:inherit;}',
 '#' + HOST_ID + ' .doc-modal-row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;}',
+  '#doc-ctxmenu{position:fixed;z-index:60;min-width:230px;max-height:calc(100vh - 16px);overflow-y:auto;padding:4px;background:var(--surface2,#191c24);color:var(--text,#e6e8ee);border:1px solid var(--border,#2a2f3a);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.45);font-size:.85rem;}',
+  '#doc-ctxmenu .doc-ctx-item{display:flex;align-items:center;justify-content:space-between;gap:18px;width:100%;padding:5px 10px;border:0;border-radius:5px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;}',
+  '#doc-ctxmenu .doc-ctx-item:hover:not(:disabled),#doc-ctxmenu .doc-ctx-item:focus-visible{background:var(--surface3,#22262f);outline:0;}',
+  '#doc-ctxmenu .doc-ctx-item:disabled{opacity:.4;cursor:default;}',
+  '#doc-ctxmenu .doc-ctx-item.danger{color:#ff8a85;}',
+  '#doc-ctxmenu kbd{font:inherit;font-size:.75rem;opacity:.55;}',
+  '#doc-ctxmenu .doc-ctx-head{padding:6px 10px 2px;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;opacity:.55;}',
+  '#doc-ctxmenu .doc-ctx-sep{height:1px;margin:4px 6px;background:var(--border,#2a2f3a);}',
 '.doc-b{position:relative;margin:0;max-width:none;color:#111;font-size:11pt;line-height:1.15;}',
 '.doc-b:hover{background:rgba(0,0,0,.025);}',
 '.doc-b.sel{background:rgba(0,120,215,.08);box-shadow:inset 2px 0 0 #0078d4;}',
@@ -656,6 +664,22 @@ function ensureTab() {
     });
   }
 
+  function toggleList(ordered) {
+    const block = selectedBlock();
+    if (!block) return;
+    if (block.type === 'list' && block.ordered === ordered) applyBlockType('paragraph');
+    else applySelectedBlock((current) => {
+      const next = Object.assign({}, current);
+      const got = itemsOfBlock(current);
+      if (!got.items.length) return null;
+      next.items = got.items;
+      if (got.itemRuns.some(Boolean)) next.itemRuns = got.itemRuns; else delete next.itemRuns;
+      next.type = 'list'; next.ordered = ordered;
+      delete next.text; delete next.runs;
+      return next;
+    });
+  }
+
   function onFormatClick(event) {
     const button = event.target.closest('button');
     if (!button || button.disabled) return;
@@ -691,20 +715,7 @@ function ensureTab() {
     } else if (button.dataset.blockAlign) {
       applySelectedBlock((block) => Object.assign({}, block, { align: button.dataset.blockAlign }));
     } else if (button.dataset.blockList) {
-      const block = selectedBlock();
-      if (!block) return;
-      const ordered = button.dataset.blockList === 'ordered';
-      if (block.type === 'list' && block.ordered === ordered) applyBlockType('paragraph');
-      else applySelectedBlock((current) => {
-        const next = Object.assign({}, current);
-        const got = itemsOfBlock(current);
-        if (!got.items.length) return null;
-        next.items = got.items;
-        if (got.itemRuns.some(Boolean)) next.itemRuns = got.itemRuns; else delete next.itemRuns;
-        next.type = 'list'; next.ordered = ordered;
-        delete next.text; delete next.runs;
-        return next;
-      });
+      toggleList(button.dataset.blockList === 'ordered');
     } else if (button.id === 'doc-insert-pagebreak') {
       insertSelectedPageBreak();
     } else if (button.dataset.blockMove) {
@@ -712,6 +723,191 @@ function ensureTab() {
     } else if (button.hasAttribute('data-block-delete')) {
       deleteSelectedBlock();
     }
+  }
+
+
+  // ── Menu contextual del editor ─────────────────────────────────────────
+  // Reemplaza el menu generico del navegador dentro del documento. Es DOM
+  // (no nativo) por la misma razon que los dialogos: el foco de Electron en
+  // Windows. Los botones no roban la seleccion (mousedown se cancela), y cada
+  // accion la restaura antes de actuar.
+  function closeContextMenu() {
+    const m = document.getElementById('doc-ctxmenu');
+    if (m) m.remove();
+    ui.ctxCleanup && ui.ctxCleanup();
+    ui.ctxCleanup = null;
+  }
+
+  async function clipboardText() {
+    try { return String(await navigator.clipboard.readText()); } catch (e) { return null; }
+  }
+
+  function insertPlainText(ce, text) {
+    ce.focus({ preventScroll: true });
+    let ok = false;
+    try { ok = document.execCommand('insertText', false, text); } catch (e) { ok = false; }
+    if (!ok) {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount) return;
+      const r = sel.getRangeAt(0);
+      r.deleteContents();
+      const node = document.createTextNode(text);
+      r.insertNode(node);
+      r.setStartAfter(node); r.collapse(true);
+      sel.removeAllRanges(); sel.addRange(r);
+    }
+    ce.dispatchEvent(new Event('input', { bubbles: true }));
+    flushPending();
+  }
+
+  async function duplicateSelectedBlock() {
+    const block = selectedBlock();
+    if (!block || !ui.snap) return;
+    await flushPending();
+    const at = ui.snap.doc.blocks.findIndex((b) => b.id === block.id);
+    const copy = Object.assign({}, block);
+    delete copy.id;
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'insert', index: at + 1, block: copy }] });
+    if (res && res.ok) {
+      const id = res.doc.blocks[at + 1] && res.doc.blocks[at + 1].id;
+      applySnapshot(res);
+      if (id) select(id);
+    } else if (res && res.error) toast(res.error, 'error');
+  }
+
+  function contextMenuItems(ctx) {
+    const { ce, hasSel, block, inCell } = ctx;
+    const items = [];
+    const sep = () => { if (items.length && items[items.length - 1].sep !== true) items.push({ sep: true }); };
+    const head = (label) => { sep(); items.push({ head: label }); };
+    const inline = (label, action, value) => ({ label, inline: true, run: () => applyInline(action, value) });
+
+    if (ce) {
+      items.push({ label: 'Cortar', hint: 'Ctrl+X', disabled: !hasSel, inline: true, run: () => { try { document.execCommand('cut'); } catch (e) { /* sin portapapeles */ } } });
+      items.push({ label: 'Copiar', hint: 'Ctrl+C', disabled: !hasSel, inline: true, run: () => { try { document.execCommand('copy'); } catch (e) { /* sin portapapeles */ } } });
+      items.push({ label: 'Pegar sin formato', hint: 'Ctrl+Shift+V', inline: true, run: async () => {
+        const t = await clipboardText();
+        if (t == null) { toast('El portapapeles no esta disponible: usa Ctrl+V', 'error'); return; }
+        if (t) insertPlainText(ce, t);
+      } });
+      items.push({ label: 'Seleccionar todo en el bloque', inline: true, run: () => {
+        const r = document.createRange(); r.selectNodeContents(ce);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      } });
+      head('Formato');
+      items.push(inline('Negrita', 'bold'), inline('Cursiva', 'italic'), inline('Subrayado', 'underline'), inline('Tachado', 'strike'));
+      items.push({ label: 'Enlace…', inline: true, run: () => linkAction() });
+      if (ce.querySelector('a') || (window.getSelection().anchorNode && window.getSelection().anchorNode.parentElement && window.getSelection().anchorNode.parentElement.closest('a'))) items.push(inline('Quitar enlace', 'unlink'));
+      items.push(inline('Quitar formato', 'clear'));
+    }
+    if (block && !inCell) {
+      head('Convertir en');
+      const t = block.type;
+      if (t !== 'paragraph') items.push({ label: 'Párrafo', run: () => applyBlockType('paragraph') });
+      [1, 2, 3].forEach((l) => items.push({ label: 'Título ' + l, run: () => applyBlockType('heading', l) }));
+      items.push({ label: 'Cita', run: () => applyBlockType('quote') });
+      items.push({ label: 'Código', run: () => applyBlockType('code') });
+      items.push({ label: 'Lista con viñetas', run: () => toggleList(false) });
+      items.push({ label: 'Lista numerada', run: () => toggleList(true) });
+    } else if (block && block.type === 'list') {
+      head('Lista');
+      items.push({ label: 'Con viñetas', run: () => toggleList(false) }, { label: 'Numerada', run: () => toggleList(true) });
+    }
+    if (block && block.type === 'table') {
+      head('Tabla');
+      [['addRowBefore', 'Insertar fila arriba'], ['addRowAfter', 'Insertar fila abajo'], ['addColBefore', 'Insertar columna a la izquierda'],
+        ['addColAfter', 'Insertar columna a la derecha'], ['deleteRow', 'Eliminar fila'], ['deleteCol', 'Eliminar columna'],
+        ['header', block.header === false ? 'Primera fila como encabezado' : 'Quitar encabezado']]
+        .forEach(([a, l]) => items.push({ label: l, run: () => tableAction(a) }));
+    }
+    if (block && block.type === 'image') {
+      head('Imagen');
+      [25, 50, 75, 100].forEach((pct) => items.push({ label: 'Ancho ' + pct + '%', run: () => setImageWidth(Math.round(contentWidthPx() * pct / 100)) }));
+    }
+    if (block) {
+      head('Bloque');
+      items.push({ label: 'Subir', run: () => moveSelectedBlock('up') }, { label: 'Bajar', run: () => moveSelectedBlock('down') });
+      items.push({ label: 'Duplicar', run: duplicateSelectedBlock });
+      items.push({ label: 'Eliminar', danger: true, run: deleteSelectedBlock });
+    }
+    head('Insertar');
+    items.push({ label: 'Tabla…', run: () => { const b = el('doc-ins-table'); if (b) b.click(); } });
+    items.push({ label: 'Imagen…', run: () => { const b = el('doc-ins-image'); if (b) b.click(); } });
+    items.push({ label: 'Salto de página', run: insertSelectedPageBreak });
+    head('Documento');
+    items.push({ label: 'Buscar y reemplazar…', hint: 'Ctrl+F', run: findAndReplace });
+    const h = ui.snap && ui.snap.history;
+    items.push({ label: 'Deshacer', hint: 'Ctrl+Z', disabled: !(h && h.canUndo), run: () => travelHistory('undo') });
+    items.push({ label: 'Rehacer', hint: 'Ctrl+Y', disabled: !(h && h.canRedo), run: () => travelHistory('redo') });
+    return items;
+  }
+
+  function showContextMenu(e) {
+    const bEl = e.target.closest && e.target.closest('.doc-b');
+    const ce = e.target.closest && e.target.closest('.doc-ce');
+    closeContextMenu();
+    if (bEl) select(bEl.dataset.id);
+    const cell = e.target.closest && e.target.closest('[data-tr]');
+    if (cell && bEl) ui.cell = { id: bEl.dataset.id, row: Number(cell.dataset.tr), col: Number(cell.dataset.tc) };
+    const sel = window.getSelection();
+    const hasSel = !!(ce && sel && sel.rangeCount && !sel.isCollapsed && ce.contains(sel.getRangeAt(0).startContainer));
+    if (ce && sel && sel.rangeCount && ce.contains(sel.getRangeAt(0).startContainer)) {
+      ui.savedCe = ce; ui.savedRange = sel.getRangeAt(0).cloneRange();
+    } else if (ce) {
+      // Clic derecho sin seleccion: el cursor se lleva al punto del clic.
+      let r = null;
+      if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(e.clientX, e.clientY);
+      if (r && ce.contains(r.startContainer)) { sel.removeAllRanges(); sel.addRange(r); ui.savedCe = ce; ui.savedRange = r.cloneRange(); }
+    }
+    const block = bEl ? ((ui.snap && ui.snap.doc && ui.snap.doc.blocks) || []).find((b) => b.id === bEl.dataset.id) : null;
+    const items = contextMenuItems({ ce, hasSel, block, inCell: !!cell });
+
+    const menu = document.createElement('div');
+    menu.id = 'doc-ctxmenu';
+    menu.setAttribute('role', 'menu');
+    items.forEach((it) => {
+      if (it.sep) { const d = document.createElement('div'); d.className = 'doc-ctx-sep'; menu.appendChild(d); return; }
+      if (it.head) { const d = document.createElement('div'); d.className = 'doc-ctx-head'; d.textContent = it.head; menu.appendChild(d); return; }
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.className = 'doc-ctx-item' + (it.danger ? ' danger' : '');
+      b.disabled = !!it.disabled;
+      b.innerHTML = '<span></span><kbd></kbd>';
+      b.firstChild.textContent = it.label;
+      b.lastChild.textContent = it.hint || '';
+      b.addEventListener('click', async () => {
+        closeContextMenu();
+        if (it.inline) { if (liveCe() !== ui.savedCe) restoreSavedSelection(); }
+        try { await it.run(); } catch (err) { toast('No se pudo completar la accion', 'error'); }
+      });
+      menu.appendChild(b);
+    });
+    // Cancelar mousedown evita que el menu le quite el foco o la seleccion al texto.
+    menu.addEventListener('mousedown', (ev) => ev.preventDefault());
+    const hostEl = host() || document.body;
+    hostEl.appendChild(menu);
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    let x = e.clientX, y = e.clientY;
+    if (x + mw > window.innerWidth - 4) x = Math.max(4, window.innerWidth - mw - 4);
+    if (y + mh > window.innerHeight - 4) y = Math.max(4, window.innerHeight - mh - 4);
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+
+    const away = (ev) => { if (!menu.contains(ev.target)) closeContextMenu(); };
+    const esc = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); closeContextMenu(); } };
+    document.addEventListener('mousedown', away, true);
+    document.addEventListener('keydown', esc, true);
+    window.addEventListener('blur', closeContextMenu);
+    const body = el('doc-body');
+    body && body.addEventListener('scroll', closeContextMenu, { once: true });
+    ui.ctxCleanup = () => {
+      document.removeEventListener('mousedown', away, true);
+      document.removeEventListener('keydown', esc, true);
+      window.removeEventListener('blur', closeContextMenu);
+    };
+    const first = menu.querySelector('button:not([disabled])');
+    if (first) first.tabIndex = -1;
   }
 
   // ── Pegar con formato (hito 4+) ────────────────────────────────────────
@@ -2430,6 +2626,11 @@ const h = host();
       }
       ce.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    b0.addEventListener('contextmenu', (e) => {
+      // Fuera de los bloques (papel vacio) tambien se ofrece el menu, solo con insertar/documento.
+      e.preventDefault();
+      showContextMenu(e);
+    });
     b0.addEventListener('mousedown', (e) => {
       const bEl = e.target.closest('.doc-b');
       select(bEl ? bEl.dataset.id : null);
@@ -2446,6 +2647,9 @@ const h = host();
       return;
     }
     if (!isActive()) return;
+    if (e.key === 'Escape' && document.getElementById('doc-ctxmenu')) {
+      e.preventDefault(); e.stopPropagation(); closeContextMenu(); return;
+    }
 
     const enCampo = !!(e.target && e.target.closest && e.target.closest('textarea, input, .doc-ce'));
     if (e.key === 'Escape' && !enCampo) { e.preventDefault(); api.close(); return; }

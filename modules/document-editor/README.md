@@ -245,3 +245,11 @@ Limites: el pegado de listas/tablas con formato aun entra como texto plano, y la
 - ☑ **Pegar con formato** desde Word/Docs/web (`paste.js`).
 - ☑ **Formato dentro de listas y celdas** (`itemRuns`/`cellRuns`).
 - ☐ Pendiente: pegar listas/tablas con formato dentro de items/celdas, `style` de la IA sobre items/celdas, PDF escaneados (OCR), tablas de PDF.
+
+## Menu contextual
+
+Clic derecho dentro del documento abre un menu propio (DOM, no nativo): cortar/copiar/pegar sin formato,
+formato en linea y enlace, convertir el bloque (parrafo, titulos, cita, codigo, listas), operaciones de tabla
+(si el clic es en una celda) y de imagen (ancho), mover/duplicar/eliminar bloque, insertar tabla/imagen/salto de
+pagina, buscar y reemplazar, deshacer/rehacer. Escape o clic fuera lo cierra. La barra de objeto (tabla/imagen)
+ahora reserva su altura para que seleccionar una tabla no desplace el contenido bajo el cursor.
