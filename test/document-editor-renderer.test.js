@@ -53,7 +53,7 @@ async function boot(blocks, page, styles) {
     docEdit: async (req) => {
       server.edits.push(req.ops);
       const res = patch.applyPatch(server.doc, { expectedHash: req.expectedHash, ops: req.ops });
-      if (!res.ok) return { ok: false, error: (res.errors && res.errors[0] && res.errors[0].message) || 'patch' };
+      if (!res.ok) return { ok: false, stale: !!res.stale, error: (res.errors && res.errors[0] && res.errors[0].message) || 'patch' };
       server.doc = res.doc;
       return Object.assign({ ok: true }, snapshot());
     }
@@ -615,5 +615,18 @@ describe('renderer: formato en items y celdas', () => {
     select(w, it, 3, 3);
     await key(w, it, 'Enter');
     assert.equal(server.doc.blocks.length, 1);
+  });
+});
+
+describe('renderer: documento cambiado por detras', () => {
+  withDom('si el hash esta viejo la UI relee y reintenta en vez de quedar bloqueada', async () => {
+    const { w, server } = await boot([{ id: 'p1', type: 'paragraph', text: 'Hola mundo' }]);
+    // Alguien (la IA, un aviso perdido) cambia el documento sin que la UI lo sepa.
+    server.doc = patch.applyPatch(server.doc, { expectedHash: server.doc.hash, ops: [{ op: 'setTitle', title: 'Otro' }] }).doc;
+    select(w, surfaces(w)[0], 0, 4);
+    w.document.querySelector('[data-block-toggle="bold"]').click();
+    await tick(120);
+    assert.equal(server.doc.blocks[0].runs[0].bold, true);
+    assert.equal(server.doc.title, 'Otro');
   });
 });

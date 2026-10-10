@@ -567,7 +567,7 @@ function ensureTab() {
     if (!current) return;
     const next = update(current);
     if (!next) return;
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'replaceBlock', id, block: next }] });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'replaceBlock', id, block: next }] });
     if (res && res.ok) { applySnapshot(res); select(id); scheduleAutoSave(); }
     else if (res && res.error) toast(res.error, 'error');
   }
@@ -703,7 +703,7 @@ function ensureTab() {
     const emptyPara = cur.type === 'paragraph' && !blockText(cur).trim();
     const ops = [{ op: 'insertBlocks', index: emptyPara ? at : at + 1, blocks }];
     if (emptyPara) ops.push({ op: 'deleteBlock', id });
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops });
     if (res && res.ok) {
       applySnapshot(res); scheduleAutoSave();
       const fresh = (res.doc && res.doc.blocks) || [];
@@ -736,7 +736,7 @@ function ensureTab() {
     const next = Object.assign({}, cur);
     STYLE_PROPS.forEach((k) => { if (k in set) delete next[k]; });
     if (set.font && Array.isArray(next.runs)) next.runs = next.runs.map((r) => { const c = Object.assign({}, r); delete c.font; return c; });
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [
       { op: 'styles', set: { [key]: set } },
       { op: 'replaceBlock', id: cur.id, block: next }
     ] });
@@ -749,7 +749,7 @@ function ensureTab() {
   async function resetStyles() {
     if (!ui.snap || !ui.snap.open || !ui.snap.doc.styles) { toast('El documento no tiene estilos propios'); return; }
     await flushPending();
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'styles', clear: 'all' }] });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'styles', clear: 'all' }] });
     if (res && res.ok) {
       applySnapshot(res); scheduleAutoSave();
       toast('Estilos quitados', null, { label: 'Deshacer', run: () => travelHistory('undo') });
@@ -791,7 +791,7 @@ function ensureTab() {
     const op = { op: 'page', header: r.header, footer: r.footer, pageNumbers: r.pageNumbers, orientation: r.orientation };
     if (r.paper) op.paper = r.paper;
     if (r.margin) op.margin = r.margin;
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [op] });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [op] });
     if (res && res.ok) { applySnapshot(res); scheduleAutoSave(); }
     else if (res && res.error) toast(res.error, 'error');
   }
@@ -931,7 +931,7 @@ function ensureTab() {
     const blocks = ui.snap.doc.blocks || [];
     const sel = selectedBlock();
     const at = sel ? blocks.findIndex((b) => b.id === sel.id) + 1 : blocks.length;
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'insert', index: at, block }] });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'insert', index: at, block }] });
     if (res && res.ok) {
       applySnapshot(res);
       const created = ((res.doc && res.doc.blocks) || [])[at];
@@ -1162,7 +1162,7 @@ function ensureTab() {
     await flushPending();
     const index = ui.snap.doc.blocks.findIndex((item) => item.id === block.id);
     if (index < 0) return;
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [
       { op: 'insert', index: index + 1, block: { type: 'pagebreak' } }
     ] });
     if (res && res.ok) { applySnapshot(res); select(block.id); }
@@ -1179,7 +1179,7 @@ function ensureTab() {
     if (index < 0 || insertAt < 0 || index >= blocks.length || (direction === 'down' && index >= blocks.length - 1)) return;
     const moved = Object.assign({}, blocks[index]);
     delete moved.id;
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [
       { op: 'insert', index: insertAt, block: moved },
       { op: 'deleteBlock', id: selected.id }
     ] });
@@ -1197,7 +1197,7 @@ function ensureTab() {
     await flushPending();
     const blocks = ui.snap.doc.blocks || [];
     const at = blocks.findIndex((x) => x.id === block.id);
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'deleteBlock', id: block.id }] });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'deleteBlock', id: block.id }] });
     if (!(res && res.ok)) { if (res && res.error) toast(res.error, 'error'); return; }
     // Sin confirmacion nativa: se borra y se ofrece Deshacer (como Word).
     ui.selectedBlockId = null;
@@ -1224,7 +1224,7 @@ function ensureTab() {
       ok: 'Reemplazar todo'
     });
     if (!r || !r.find) return;
-    const res = await API.docEdit({ expectedHash: ui.snap?.doc?.hash, ops: [
+    const res = await docEdit({ expectedHash: ui.snap?.doc?.hash, ops: [
       { op: 'replace', find: r.find, replace: r.replace || '', all: true, caseSensitive: false }
     ] });
     if (res && res.ok) {
@@ -1246,6 +1246,30 @@ function ensureTab() {
         '\nTablas: ' + stats.tables + '\nImágenes: ' + stats.images + '\nPáginas: ' + stats.pages,
       cancel: false
     });
+  }
+
+  // Las ediciones de la UI van de a una (una cola) y, si el main avisa que el
+  // documento cambio (el hash que se envio ya era viejo porque una edicion
+  // anterior o un aviso del main llego en el medio), se vuelve a leer el estado
+  // y se reintenta una vez. Un parche viejo solo tiene sentido para la IA: la
+  // UI siempre parte de lo que el usuario esta viendo.
+  let editQueue = Promise.resolve();
+  function docEdit(req) {
+    const run = async () => {
+      let res = await API.docEdit(req);
+      if (res && res.stale) {
+        let fresh = null;
+        try { fresh = await API.docState({}); } catch (e) { fresh = null; }
+        if (fresh && fresh.open && fresh.doc && fresh.doc.hash) {
+          ui.snap = fresh;
+          res = await API.docEdit(Object.assign({}, req, { expectedHash: fresh.doc.hash }));
+        }
+      }
+      return res;
+    };
+    const next = editQueue.then(run, run);
+    editQueue = next.catch(() => {});
+    return next;
   }
 
   // ── Contenido ──────────────────────────────────────────────────────────
@@ -1908,7 +1932,7 @@ function ensureTab() {
       const next = Object.assign({}, block, { rows, cellRuns });
       if (!Object.keys(cellRuns).length) delete next.cellRuns;
       scheduleAutoSave();
-      const res = await API.docEdit({
+      const res = await docEdit({
         expectedHash: snap.doc.hash,
         ops: [{ op: 'replaceBlock', id, block: next }]
       });
@@ -1927,7 +1951,7 @@ function ensureTab() {
       const next = Object.assign({}, block, { items, itemRuns });
       if (!itemRuns.some(Boolean)) delete next.itemRuns;
       scheduleAutoSave();
-      const res = await API.docEdit({
+      const res = await docEdit({
         expectedHash: snap.doc.hash,
         ops: [{ op: 'replaceBlock', id, block: next }]
       });
@@ -1945,7 +1969,7 @@ function ensureTab() {
       const withRuns = Object.assign({}, block);
       if (runsLib.hasFormatting(clean)) { withRuns.runs = clean; delete withRuns.text; }
       else { withRuns.text = runsLib.toPlain(clean); delete withRuns.runs; }
-      const done = await API.docEdit({
+      const done = await docEdit({
         expectedHash: snap.doc.hash,
         ops: [{ op: 'replaceBlock', id, block: withRuns }]
       });
@@ -1965,7 +1989,7 @@ function ensureTab() {
         delete next.runs;
       }
     }
-    const res = await API.docEdit({
+    const res = await docEdit({
       expectedHash: snap.doc.hash,
       ops: [{ op: 'replaceBlock', id, block: next }]
     });
@@ -1993,7 +2017,7 @@ function ensureTab() {
     const nuevo = con && con.runs && runsLib && runsLib.hasFormatting(con.runs)
       ? { type: 'paragraph', runs: con.runs }
       : con && con.text ? { type: 'paragraph', text: con.text } : { type: 'paragraph', text: '' };
-    const res = await API.docEdit({
+    const res = await docEdit({
       expectedHash: snap.doc.hash,
       ops: [{ op: 'insert', index: i + 1, block: nuevo }]
     });
@@ -2032,7 +2056,7 @@ function ensureTab() {
         { op: 'deleteBlock', id: cur.id }
       ];
     }
-    const res = await API.docEdit({ expectedHash: hash, ops });
+    const res = await docEdit({ expectedHash: hash, ops });
     if (res && res.ok) {
       applySnapshot(res);
       setTimeout(() => focusBlock(prev.id), 30);
@@ -2257,7 +2281,7 @@ const h = host();
       ops = [{ op: 'replaceBlock', id: prev.id, block: next }, { op: 'deleteBlock', id: cur.id }];
       focusId = prev.id;
     }
-    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops });
     if (res && res.ok) {
       applySnapshot(res);
       const pos = focusId === prev.id ? at : 0;
