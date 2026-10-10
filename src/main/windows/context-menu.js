@@ -18,6 +18,7 @@ const { app, Menu, clipboard, dialog } = require('electron');
 const { ACTIONS, getMainWin } = require('../runtime');
 const { CFG, saveCfg } = require('../config');
 const Sessions = require('../sessions/partitions');
+const DocSpell = require('../../../modules/document-editor/spell');
 
 // Guard anti-reentrancia (Windows): si un popup anterior sigue abierto, lanzar
 // otro `popup()` deja el menu congelado. Se libera en el callback que Electron
@@ -42,6 +43,15 @@ function installContextMenu(wc, deps = {}) {
 
   wc.on('context-menu', async (_contextEvent, params) => {
     if (Sessions.isWebchatSession(wc)) return;
+    // Clic derecho dentro del editor de documentos: el menu es del editor, y
+    // desde aca solo se le pasan la palabra mal escrita y sus sugerencias.
+    try {
+      const win = getMainWin();
+      if (win && !win.isDestroyed() && win.webContents === wc && await DocSpell.claimsEvent(40)) {
+        wc.send('doc:spell', DocSpell.payloadFromParams(params));
+        return;
+      }
+    } catch { /* si falla se muestra el menu normal */ }
     // Reglas cosméticas del usuario aplicables al dominio actual
     let pageDomain = '';
     try { pageDomain = new URL(wc.getURL()).hostname.replace(/^www\./i, '').toLowerCase(); } catch {}

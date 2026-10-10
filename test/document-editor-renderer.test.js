@@ -43,7 +43,8 @@ async function boot(blocks, page, styles) {
   // Igual que en main.js, las imagenes viajan livianas: `server.doc` conserva SIEMPRE
   // los bytes; el snapshot de las respuestas los omite cuando la imagen ya se envio
   // completa (lightSnapshot), salvo el hash y el doc completo que da docState.
-  const server = { doc: model.createDoc({ blocks, page, styles }), edits: [] };
+  const server = { doc: model.createDoc({ blocks, page, styles }), edits: [], emit: (ch, p) => listeners[ch] && listeners[ch](p) };
+  const listeners = {};
   const knownImgSrc = new Map();
   const light = (doc) => {
     if (!doc || !Array.isArray(doc.blocks)) return doc;
@@ -67,7 +68,9 @@ async function boot(blocks, page, styles) {
   });
   const lightSnapshot = () => Object.assign({}, snapshot(), { doc: light(server.doc) });
   w.mc = {
-    on() {},
+    on(ch, fn) { listeners[ch] = fn; },
+    docCtxOpen() { server.ctxOpened = (server.ctxOpened || 0) + 1; },
+    docSpellAdd: async (word) => { server.added = word; return { ok: true }; },
     docState: async () => Object.assign({}, snapshot(), { doc: light(server.doc) }),
     docEdit: async (req) => {
       server.edits.push(req.ops);
@@ -726,7 +729,8 @@ describe('renderer: menu contextual propio', () => {
     const cell = w.document.querySelector('[data-tr="0"][data-tc="1"]');
     const ev = new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
     cell.dispatchEvent(ev);
-    assert.equal(ev.defaultPrevented, true);
+    // Sobre texto el evento sigue su camino (para el corrector): el main suprime el menu nativo.
+    assert.equal(ev.defaultPrevented, false);
     const menu = w.document.querySelector('#doc-ctxmenu');
     assert.ok(menu);
     const item = Array.from(menu.querySelectorAll('.doc-ctx-item')).find((b) => /Insertar fila abajo/.test(b.textContent));
@@ -751,5 +755,45 @@ describe('renderer: menu contextual propio', () => {
     assert.ok(w.document.querySelector('#doc-ctxmenu'));
     w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     assert.equal(w.document.querySelector('#doc-ctxmenu'), null);
+  });
+});
+
+
+describe('renderer: corrector ortografico', () => {
+  withDom('sobre texto no cancela el clic derecho, avisa al main y agrega sugerencias', async () => {
+    const { w, server } = await boot([{ id: 'p', type: 'paragraph', text: 'Hola mundoo cruel' }]);
+    const ce = surfaces(w)[0];
+    assert.equal(ce.getAttribute('spellcheck'), 'true');
+    const text = ce.firstChild;
+    w.document.caretRangeFromPoint = () => { const r = w.document.createRange(); r.setStart(text, 8); r.setEnd(text, 8); return r; };
+    const ev = new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 });
+    ce.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, false);
+    assert.equal(server.ctxOpened, 1);
+    server.emit('doc:spell', { word: 'mundoo', suggestions: ['mundo', 'mundos'] });
+    const items = Array.from(w.document.querySelectorAll('#doc-ctxmenu .doc-ctx-item'));
+    assert.match(items[0].textContent, /mundo/);
+    items[0].click();
+    await tick(80);
+    assert.equal(server.doc.blocks[0].text, 'Hola mundo cruel');
+  });
+
+  withDom('agregar al diccionario y palabra que no coincide', async () => {
+    const { w, server } = await boot([{ id: 'p', type: 'paragraph', text: 'Hola mundoo' }]);
+    const ce = surfaces(w)[0];
+    const text = ce.firstChild;
+    w.document.caretRangeFromPoint = () => { const r = w.document.createRange(); r.setStart(text, 8); r.setEnd(text, 8); return r; };
+    ce.dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    server.emit('doc:spell', { word: 'otra', suggestions: ['x'] });
+    assert.ok(!w.document.querySelector('#doc-ctxmenu .doc-ctx-item.spell'));
+    server.emit('doc:spell', { word: 'mundoo', suggestions: [] });
+    Array.from(w.document.querySelectorAll('#doc-ctxmenu .doc-ctx-item')).find((b) => /Agregar al diccionario/.test(b.textContent)).click();
+    await tick(40);
+    assert.equal(server.added, 'mundoo');
+  });
+
+  withDom('en un bloque de codigo no hay corrector', async () => {
+    const { w } = await boot([{ id: 'c', type: 'code', text: 'let x' }]);
+    assert.equal(surfaces(w)[0].getAttribute('spellcheck'), 'false');
   });
 });

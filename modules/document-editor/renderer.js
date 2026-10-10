@@ -294,6 +294,7 @@
   '#doc-ctxmenu .doc-ctx-item:hover:not(:disabled),#doc-ctxmenu .doc-ctx-item:focus-visible{background:var(--surface3,#22262f);outline:0;}',
   '#doc-ctxmenu .doc-ctx-item:disabled{opacity:.4;cursor:default;}',
   '#doc-ctxmenu .doc-ctx-item.danger{color:#ff8a85;}',
+  '#doc-ctxmenu .doc-ctx-item.spell{font-weight:600;}',
   '#doc-ctxmenu kbd{font:inherit;font-size:.75rem;opacity:.55;}',
   '#doc-ctxmenu .doc-ctx-head{padding:6px 10px 2px;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;opacity:.55;}',
   '#doc-ctxmenu .doc-ctx-sep{height:1px;margin:4px 6px;background:var(--border,#2a2f3a);}',
@@ -842,6 +843,61 @@ function ensureTab() {
     return items;
   }
 
+  // Palabra bajo el punto (x, y) dentro de un contenteditable: rango y texto.
+  function wordRangeAt(ce, x, y) {
+    let r = null;
+    if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(x, y);
+    if (!r || !ce.contains(r.startContainer) || r.startContainer.nodeType !== 3) return null;
+    const node = r.startContainer;
+    const text = node.nodeValue || '';
+    const isW = (c) => /[\p{L}\p{M}\p{N}'’_-]/u.test(c);
+    let a = r.startOffset, b = r.startOffset;
+    while (a > 0 && isW(text[a - 1])) a--;
+    while (b < text.length && isW(text[b])) b++;
+    if (a === b) return null;
+    const range = document.createRange();
+    range.setStart(node, a); range.setEnd(node, b);
+    return { range, word: text.slice(a, b) };
+  }
+
+  // Llega del main (doc:spell) con la palabra mal escrita del clic derecho.
+  function addSpellItems(payload) {
+    const menu = document.getElementById('doc-ctxmenu');
+    const at = ui.ctxWord;
+    if (!menu || !at || !payload || !payload.word) return;
+    const norm = (w) => String(w).replace(/^[-'’_]+|[-'’_]+$/g, '');
+    if (norm(at.word) !== norm(payload.word)) return;
+    const frag = document.createDocumentFragment();
+    const mk = (label, fn, cls) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.setAttribute('role', 'menuitem');
+      b.className = 'doc-ctx-item' + (cls ? ' ' + cls : '');
+      b.innerHTML = '<span></span><kbd></kbd>';
+      b.firstChild.textContent = label;
+      if (!fn) b.disabled = true;
+      else b.addEventListener('click', async () => { closeContextMenu(); try { await fn(); } catch (e) { toast('No se pudo completar la accion', 'error'); } });
+      frag.appendChild(b);
+    };
+    const replaceWith = (text) => () => {
+      const ce = ceOf(at.range.startContainer);
+      if (!ce) return;
+      ce.focus({ preventScroll: true });
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(at.range);
+      insertPlainText(ce, text);
+    };
+    const hd = document.createElement('div');
+    hd.className = 'doc-ctx-head'; hd.textContent = 'Ortografía: «' + payload.word + '»';
+    frag.appendChild(hd);
+    if (payload.suggestions && payload.suggestions.length) payload.suggestions.forEach((sg) => mk(sg, replaceWith(sg), 'spell'));
+    else mk('Sin sugerencias', null);
+    if (API.docSpellAdd) mk('Agregar al diccionario', async () => { await API.docSpellAdd(payload.word); toast('«' + payload.word + '» agregada al diccionario'); });
+    const sp = document.createElement('div');
+    sp.className = 'doc-ctx-sep';
+    frag.appendChild(sp);
+    menu.insertBefore(frag, menu.firstChild);
+  }
+
   function showContextMenu(e) {
     const bEl = e.target.closest && e.target.closest('.doc-b');
     const ce = e.target.closest && e.target.closest('.doc-ce');
@@ -859,6 +915,7 @@ function ensureTab() {
       if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(e.clientX, e.clientY);
       if (r && ce.contains(r.startContainer)) { sel.removeAllRanges(); sel.addRange(r); ui.savedCe = ce; ui.savedRange = r.cloneRange(); }
     }
+    ui.ctxWord = ce ? wordRangeAt(ce, e.clientX, e.clientY) : null;
     const block = bEl ? ((ui.snap && ui.snap.doc && ui.snap.doc.blocks) || []).find((b) => b.id === bEl.dataset.id) : null;
     const items = contextMenuItems({ ce, hasSel, block, inCell: !!cell });
 
@@ -1547,7 +1604,7 @@ function ensureTab() {
   // coordenada en data-*. Los tramos con formato salen del overlay del bloque.
   function cellMarkup(text, rr, attrs) {
     const inner = Array.isArray(rr) && rr.length && html ? html.runsToHtml({ runs: rr }) : esc(text);
-    return '<div class="doc-ce doc-cell" contenteditable="true" spellcheck="false" data-ce="1" ' + attrs + '>' + inner + '</div>';
+    return '<div class="doc-ce doc-cell" contenteditable="true" spellcheck="true" data-ce="1" ' + attrs + '>' + inner + '</div>';
   }
 
   function blockMarkup(b) {
@@ -1592,7 +1649,7 @@ function ensureTab() {
     const inner = b.type === 'code'
       ? '<code>' + esc(blockText(b)) + '</code>'
       : (Array.isArray(b.runs) && b.runs.length ? html.runsToHtml(b) : esc(blockText(b)));
-    return '<' + tag + ' class="doc-ce" contenteditable="true" spellcheck="false" ' +
+    return '<' + tag + ' class="doc-ce" contenteditable="true" spellcheck="' + (b.type === 'code' ? 'false' : 'true') + '" ' +
       'data-ce="1" role="textbox" aria-multiline="true">' + inner + '</' + tag + '>';
   }
 
@@ -2628,7 +2685,13 @@ const h = host();
     });
     b0.addEventListener('contextmenu', (e) => {
       // Fuera de los bloques (papel vacio) tambien se ofrece el menu, solo con insertar/documento.
-      e.preventDefault();
+      // Sobre texto NO se cancela el evento: Chromium solo entrega la palabra
+      // mal escrita y sus sugerencias si el clic derecho sigue su camino. El
+      // main suprime su menu nativo al recibir este aviso (ver spell.js).
+      const ce = e.target.closest && e.target.closest('.doc-ce');
+      const spellable = !!(ce && ce.getAttribute('spellcheck') === 'true' && API.docCtxOpen);
+      if (spellable) { try { API.docCtxOpen(); } catch (err) { /* sin aviso: sale el menu nativo */ } }
+      else e.preventDefault();
       showContextMenu(e);
     });
     b0.addEventListener('mousedown', (e) => {
@@ -2825,6 +2888,7 @@ const h = host();
       if (btn) btn.classList.toggle('open', api.isOpen());
     });
     API.on('doc:open-request', (p) => { api.openPath(p); });
+    API.on('doc:spell', (payload) => addSpellItems(payload));
     API.on('doc:error', (p) => toast((p && p.error) || 'Error del editor', 'error'));
   } catch {}
 

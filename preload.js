@@ -71,7 +71,7 @@ const ALLOWED = new Set([
    'lab:fs:list','lab:fs:delete','lab:fs:mkdir',
    'lab:fs:save-dialog','lab:fs:open-dialog',
    // Editor de documentos (PDF/DOCX/TXT/MD)
-   'doc:changed','doc:open-request','doc:error',
+   'doc:changed','doc:open-request','doc:error','doc:spell',
 ]);
 
 // -- Internal state for lab recording frame callback
@@ -276,6 +276,8 @@ contextBridge.exposeInMainWorld('mc', {
 
   // Editor de documentos. Toda la escritura pasa por el main: el renderer
   // nunca toca el disco y la IA usa exactamente estos mismos canales.
+  docCtxOpen:    ()       => ipcRenderer.send('doc:ctx-open'),
+  docSpellAdd:   (w)      => ipcRenderer.invoke('doc:spell-add', w),
   docState:      (opts)   => ipcRenderer.invoke('doc:state', opts || {}),
   docLimits:     ()       => ipcRenderer.invoke('doc:limits'),
   docOpen:       ()       => ipcRenderer.invoke('doc:open'),

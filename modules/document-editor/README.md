@@ -253,3 +253,13 @@ formato en linea y enlace, convertir el bloque (parrafo, titulos, cita, codigo, 
 (si el clic es en una celda) y de imagen (ancho), mover/duplicar/eliminar bloque, insertar tabla/imagen/salto de
 pagina, buscar y reemplazar, deshacer/rehacer. Escape o clic fuera lo cierra. La barra de objeto (tabla/imagen)
 ahora reserva su altura para que seleccionar una tabla no desplace el contenido bajo el cursor.
+
+### Corrector ortografico en el menu contextual
+
+Los parrafos, titulos, items y celdas tienen `spellcheck` activo (el codigo no). Chromium solo entrega la palabra
+mal escrita y sus sugerencias en el evento `context-menu` del webContents, que no se emite si la pagina cancela
+`contextmenu`; por eso sobre texto el editor NO cancela el evento: avisa con `docCtxOpen` (canal `doc:ctx-open`),
+`src/main/windows/context-menu.js` suprime su menu nativo mientras el aviso es reciente (`spell.js`) y reenvia
+`doc:spell {word, suggestions}`. El editor agrega al tope de su menu las sugerencias (reemplazan la palabra bajo el
+cursor) y "Agregar al diccionario" (`doc:spell-add`). Los idiomas son los del sistema. Si el aviso se perdiera
+saldria ademas el menu nativo: es el unico punto a verificar en la app real.

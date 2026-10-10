@@ -32,6 +32,7 @@ const textIo = require('./core/text-io');
 const docxWrite = require('./core/docx-write');
 const docxRead = require('./core/docx-read');
 const pdfText = require('./core/pdf-text');
+const spell = require('./spell');
 
 const LOG = '[DOC-ED]';
 const log = (...a) => console.log(LOG, ...a);
@@ -843,6 +844,17 @@ function setup(ctx) {
   app.on('open-file', (event, file) => {
     event.preventDefault();
     handleExternalOpen(file).catch((e) => warn('open-file fallo:', e.message));
+  });
+
+  // ── Corrector ortografico (ver spell.js) ──
+  ipcMain.removeAllListeners('doc:ctx-open');
+  ipcMain.on('doc:ctx-open', () => spell.mark());
+  ipcMain.removeHandler('doc:spell-add');
+  ipcMain.handle('doc:spell-add', (event, word) => {
+    const w = String(word || '').trim().slice(0, 80);
+    if (!w || /\s/.test(w)) return { ok: false };
+    try { event.sender.session.addWordToSpellCheckerDictionary(w); return { ok: true }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   // ── Canales ──
