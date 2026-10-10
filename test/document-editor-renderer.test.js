@@ -98,7 +98,7 @@ async function boot(blocks, page, styles) {
   w.document.queryCommandValue = () => '';
 
   w.eval('var state = { tabs: [{ id: 1, url: "mc://doc", title: "Documento" }], activeTab: 1 };');
-  for (const f of ['model.js', 'html.js', 'runs.js', 'dom-runs.js', 'tables.js', 'pagesetup.js']) w.eval(read('core', f));
+  for (const f of ['model.js', 'html.js', 'runs.js', 'dom-runs.js', 'tables.js', 'pagesetup.js', 'paste.js']) w.eval(read('core', f));
   w.eval(read('renderer.js'));
   await tick();
   await w.DocEditor.open();
@@ -533,5 +533,53 @@ describe('renderer: estilos del documento (hito 4)', () => {
     await click(w, w.document.querySelector('[data-style-reset]'));
     assert.equal(server.doc.styles, undefined);
     assert.equal(w.document.getElementById('doc-doc-styles').textContent, '');
+  });
+});
+
+describe('renderer: pegar con formato', () => {
+  const fire = (w, target, html, text = '') => {
+    const ev = new w.Event('paste', { bubbles: true, cancelable: true });
+    ev.clipboardData = { files: [], getData: (t) => (t === 'text/html' ? html : text) };
+    target.dispatchEvent(ev);
+    return ev;
+  };
+
+  withDom('un parrafo con negrita se pega en el cursor conservando el formato', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'inicio fin' }]);
+    select(w, surfaces(w)[0], 7, 7);
+    const ev = fire(w, surfaces(w)[0], '<p>uno <b>dos</b></p>');
+    await tick(100);
+    assert.equal(ev.defaultPrevented, true);
+    const runs = server.doc.blocks[0].runs;
+    assert.equal(runs.map((r) => r.text).join(''), 'inicio uno dosfin');
+    assert.equal(runs.find((r) => r.text === 'dos').bold, true);
+  });
+
+  withDom('varios bloques (titulo + lista + tabla) se insertan despues del actual', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'antes' }, { id: 'z', type: 'paragraph', text: 'despues' }]);
+    select(w, surfaces(w)[0], 5, 5);
+    fire(w, surfaces(w)[0], '<h2>Nuevo</h2><ul><li>x</li><li>y</li></ul><table><tr><td>1</td></tr></table>');
+    await tick(150);
+    assert.deepEqual(server.doc.blocks.map((b) => b.type), ['paragraph', 'heading', 'list', 'table', 'paragraph']);
+    assert.equal(server.doc.blocks[0].text, 'antes');
+    assert.equal(server.doc.blocks[4].text, 'despues');
+  });
+
+  withDom('sobre un parrafo vacio se pega en su lugar', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: '' }]);
+    surfaces(w)[0].focus();
+    fire(w, surfaces(w)[0], '<h1>Titulo</h1><p>cuerpo</p>');
+    await tick(150);
+    assert.deepEqual(server.doc.blocks.map((b) => b.type), ['heading', 'paragraph']);
+  });
+
+  withDom('html sin formato cae al pegado de texto plano de siempre', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'ab' }]);
+    select(w, surfaces(w)[0], 1, 1);
+    const ev = fire(w, surfaces(w)[0], '<p>solo</p>', 'solo');
+    surfaces(w)[0].dispatchEvent(new w.FocusEvent('focusout', { bubbles: true }));
+    await tick(100);
+    assert.equal(ev.defaultPrevented, true, 'lo maneja el pegado plano');
+    assert.equal(server.doc.blocks[0].text, 'asolob');
   });
 });

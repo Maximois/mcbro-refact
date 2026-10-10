@@ -185,6 +185,10 @@ Cambios de fondo que conviene conocer:
 - El DOCX ya no escribe Calibri en cada tramo: manda el estilo del documento. El lector ignora el tamaño 11 pt de un párrafo (es el base).
 - Limitación: al reabrir un DOCX, los estilos se leen como formato propio de cada bloque, no como `doc.styles`.
 
+## Pegar con formato
+
+Al pegar HTML (Word, Google Docs, una web) dentro de un párrafo, título o cita, `core/paste.js` lo convierte en bloques del modelo: títulos (h1-h6 → 1-3), párrafos con negrita/cursiva/subrayado/tachado/color/resaltado/fuente/tamaño/enlace, alineación, listas (HTML y las `mso-list` de Word), citas, código, tablas e imágenes `data:`. Se descartan scripts, estilos, clases, iframes y enlaces no seguros, y el "ruido" que Word escribe en cada tramo (Calibri 11, color negro). Un solo párrafo se inserta en el cursor; varios bloques se insertan después del actual (o en lugar de un párrafo vacío) con un solo *Deshacer*. Si el HTML no aporta nada más que texto, se usa el pegado de texto plano de siempre.
+
 ## Seguridad
 
 - Solo se tocan archivos concedidos: los que el usuario eligió con un diálogo,

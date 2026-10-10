@@ -26,6 +26,7 @@
   const domRuns = (window.MCDoc && window.MCDoc.domRuns) || null;
   const tablesLib = (window.MCDoc && window.MCDoc.tables) || null;
   const pageLib = (window.MCDoc && window.MCDoc.pagesetup) || null;
+  const pasteLib = (window.MCDoc && window.MCDoc.paste) || null;
   const RUN_TYPES = ['paragraph', 'heading', 'quote'];
   const PANEL_ID = 'panel-doc';
   const HOST_ID = 'doc-host';
@@ -641,6 +642,70 @@ function ensureTab() {
     }
   }
 
+  // ── Pegar con formato (hito 4+) ────────────────────────────────────────
+  // Devuelve true si se ocupo del pegado; false deja pasar el pegado de texto
+  // plano de siempre (cuando el HTML no aporta nada o no se pudo leer).
+  function richPaste(e) {
+    if (!pasteLib || !html) return false;
+    const ce = e.target.closest && e.target.closest('.doc-ce');
+    const dt = e.clipboardData;
+    const htmlText = dt ? String(dt.getData('text/html') || '') : '';
+    if (!ce || !htmlText) return false;
+    let blocks;
+    try {
+      const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+      blocks = pasteLib.blocksFromHtml(doc.body);
+    } catch (err) { return false; }
+    if (!pasteLib.isRich(blocks)) return false;
+    const sel = window.getSelection && window.getSelection();
+    const inCe = sel && sel.rangeCount && ce.contains(sel.getRangeAt(0).startContainer);
+    const single = blocks.length === 1 && blocks[0].type === 'paragraph';
+    if (single && inCe) {
+      // Un solo parrafo: va dentro del texto, en el cursor.
+      const runs = blocks[0].runs || [{ text: blocks[0].text }];
+      sel.deleteFromDocument();
+      const r = sel.getRangeAt(0);
+      const frag = r.createContextualFragment(html.runsToHtml({ type: 'paragraph', runs }));
+      const last = frag.lastChild;
+      r.insertNode(frag);
+      if (last) {
+        const after = document.createRange();
+        after.setStartAfter(last);
+        after.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(after);
+      }
+      ce.dispatchEvent(new Event('input', { bubbles: true }));
+      // Se confirma ya: entra al historial (deshacer) y al autoguardado.
+      flushPending();
+      return true;
+    }
+    if (inCe) sel.deleteFromDocument();
+    const bEl = ce.closest('.doc-b');
+    if (bEl) pasteBlocksAfter(bEl.dataset.id, blocks);
+    return true;
+  }
+
+  async function pasteBlocksAfter(id, blocks) {
+    await flushPending();
+    const list = (ui.snap && ui.snap.doc && ui.snap.doc.blocks) || [];
+    const at = list.findIndex((b) => b.id === id);
+    if (at < 0) return;
+    const cur = list[at];
+    // Sobre un parrafo vacio se pega en su lugar (como Word).
+    const emptyPara = cur.type === 'paragraph' && !blockText(cur).trim();
+    const ops = [{ op: 'insertBlocks', index: emptyPara ? at : at + 1, blocks }];
+    if (emptyPara) ops.push({ op: 'deleteBlock', id });
+    const res = await API.docEdit({ expectedHash: ui.snap.doc.hash, ops });
+    if (res && res.ok) {
+      applySnapshot(res); scheduleAutoSave();
+      const fresh = (res.doc && res.doc.blocks) || [];
+      const lastAt = (emptyPara ? at : at + 1) + blocks.length - 1;
+      if (fresh[lastAt]) select(fresh[lastAt].id);
+      toast(blocks.length + ' bloque(s) pegados', null, { label: 'Deshacer', run: () => travelHistory('undo') });
+    } else if (res && res.error) toast(res.error, 'error');
+  }
+
   // ── Estilos del documento (hito 4) ─────────────────────────────────────
   const STYLE_PROPS = ['size', 'color', 'bold', 'italic', 'align', 'lineHeight'];
   const STYLE_NAMES = { heading1: 'Título 1', heading2: 'Título 2', heading3: 'Título 3', paragraph: 'Normal', quote: 'Cita', code: 'Código' };
@@ -1035,10 +1100,14 @@ function ensureTab() {
     // Pegar una imagen del portapapeles: va como bloque, no como texto.
     b0.addEventListener('paste', (e) => {
       const files = imageFilesOf(e.clipboardData);
-      if (!files.length) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      insertImageFile(files[0]);
+      if (files.length) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        insertImageFile(files[0]);
+        return;
+      }
+      // HTML del portapapeles (Word, Docs, web): se pega con su formato.
+      if (richPaste(e)) { e.preventDefault(); e.stopImmediatePropagation(); }
     }, true);
     b0.addEventListener('dragover', (e) => {
       if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
