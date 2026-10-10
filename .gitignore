@@ -35,3 +35,6 @@ validate_renderer_syntax.js
 .DS_Store
 Thumbs.db
 .opencode
+
+# lo crea test/windows-context-menu.test.js al correr en Linux
+C:*
