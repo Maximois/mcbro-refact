@@ -263,3 +263,11 @@ mal escrita y sus sugerencias en el evento `context-menu` del webContents, que n
 `doc:spell {word, suggestions}`. El editor agrega al tope de su menu las sugerencias (reemplazan la palabra bajo el
 cursor) y "Agregar al diccionario" (`doc:spell-add`). Los idiomas son los del sistema. Si el aviso se perdiera
 saldria ademas el menu nativo: es el unico punto a verificar en la app real.
+
+## Seleccion de varios bloques
+
+- **Mayus+clic**: rango de bloques desde el ancla. **Ctrl/Cmd+clic**: suma o quita un bloque.
+- **Ctrl+A**: dentro de un bloque selecciona su texto; si ya estaba todo seleccionado (o el bloque esta vacio) selecciona todos los bloques.
+- Con bloques elegidos (sin cursor de texto): **Supr/Retroceso** los borra (una sola accion de deshacer, y si no queda ninguno se deja un parrafo vacio), **Ctrl+C / Ctrl+X** copian o cortan (texto + HTML, que al pegar conserva la estructura), **Escape** deja solo el principal.
+- La barra de formato actua sobre todos (negrita/cursiva/subrayado uniformes, tamano, alineacion, interlineado, color de bloque, estilo, listas); tablas e imagenes se saltan en cambios de texto.
+- Subir/Bajar mueven el grupo junto (se agrupa en la posicion de destino), Duplicar lo inserta debajo; clic derecho sobre la seleccion abre un menu de grupo.

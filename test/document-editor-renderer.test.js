@@ -797,3 +797,107 @@ describe('renderer: corrector ortografico', () => {
     assert.equal(surfaces(w)[0].getAttribute('spellcheck'), 'false');
   });
 });
+
+describe('renderer: seleccion de varios bloques', () => {
+  const blocks3 = () => [
+    { id: 'a', type: 'paragraph', text: 'Uno' },
+    { id: 'b', type: 'paragraph', text: 'Dos' },
+    { id: 'c', type: 'paragraph', text: 'Tres' },
+    { id: 'd', type: 'paragraph', text: 'Cuatro' }];
+  const md = (w, id, opts) => w.document.querySelector('.doc-b[data-id="' + id + '"] .doc-ce')
+    .dispatchEvent(new w.MouseEvent('mousedown', Object.assign({ bubbles: true, cancelable: true, button: 0 }, opts)));
+  const sel = (w) => Array.from(w.document.querySelectorAll('.doc-b.sel')).map((x) => x.dataset.id);
+  const texts = (server) => server.doc.blocks.map((b) => b.text);
+
+  withDom('Mayus+clic elige un rango y Ctrl+clic suma o quita', async () => {
+    const { w } = await boot(blocks3());
+    md(w, 'a', {});
+    md(w, 'c', { shiftKey: true });
+    assert.deepEqual(sel(w), ['a', 'b', 'c']);
+    md(w, 'b', { ctrlKey: true });
+    assert.deepEqual(sel(w), ['a', 'c']);
+    md(w, 'd', { ctrlKey: true });
+    assert.deepEqual(sel(w), ['a', 'c', 'd']);
+    md(w, 'd', {});
+    assert.deepEqual(sel(w), ['d']);
+  });
+
+  withDom('negrita se aplica a todos; si todos la tienen se quita', async () => {
+    const { w, server } = await boot(blocks3());
+    md(w, 'a', {}); md(w, 'c', { shiftKey: true });
+    w.document.querySelector('[data-block-toggle="bold"]').click();
+    await tick(80);
+    assert.deepEqual(server.doc.blocks.map((b) => !!b.bold), [true, true, true, false]);
+    w.document.querySelector('[data-block-toggle="bold"]').click();
+    await tick(80);
+    assert.deepEqual(server.doc.blocks.map((b) => !!b.bold), [false, false, false, false]);
+  });
+
+  withDom('Supr borra todos los seleccionados en una sola accion', async () => {
+    const { w, server } = await boot(blocks3());
+    md(w, 'b', {}); md(w, 'c', { shiftKey: true });
+    const before = server.edits.length;
+    await key(w, w.document.body, 'Delete');
+    assert.deepEqual(texts(server), ['Uno', 'Cuatro']);
+    assert.equal(server.edits.length, before + 1);
+  });
+
+  withDom('mover el grupo hacia arriba y hacia abajo conserva la seleccion', async () => {
+    const { w, server } = await boot(blocks3());
+    md(w, 'b', {}); md(w, 'c', { shiftKey: true });
+    w.document.querySelector('[data-block-move="up"]').click();
+    await tick(100);
+    assert.deepEqual(texts(server), ['Dos', 'Tres', 'Uno', 'Cuatro']);
+    assert.equal(sel(w).length, 2);
+    w.document.querySelector('[data-block-move="down"]').click();
+    await tick(100);
+    assert.deepEqual(texts(server), ['Uno', 'Dos', 'Tres', 'Cuatro']);
+    w.document.querySelector('[data-block-move="down"]').click();
+    await tick(100);
+    assert.deepEqual(texts(server), ['Uno', 'Cuatro', 'Dos', 'Tres']);
+  });
+
+  withDom('duplicar el grupo lo inserta debajo', async () => {
+    const { w, server } = await boot(blocks3());
+    md(w, 'a', {}); md(w, 'b', { shiftKey: true });
+    w.document.querySelector('.doc-b[data-id="a"] .doc-ce').dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    assert.match(w.document.querySelector('#doc-ctxmenu .doc-ctx-head').textContent, /2 bloques/);
+    Array.from(w.document.querySelectorAll('#doc-ctxmenu .doc-ctx-item')).find((b) => /Duplicar/.test(b.textContent)).click();
+    await tick(100);
+    assert.deepEqual(texts(server), ['Uno', 'Dos', 'Uno', 'Dos', 'Tres', 'Cuatro']);
+  });
+
+  withDom('Ctrl+A en un bloque lleno selecciona el texto; en uno ya seleccionado, todos los bloques', async () => {
+    const { w } = await boot(blocks3());
+    const ce = surfaces(w)[0];
+    select(w, ce, 0, 1);
+    await key(w, ce, 'a').catch(() => {});
+    const ev = new w.KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    ce.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, false);            // texto parcial: lo maneja el navegador
+    select(w, ce, 0, 3);
+    const ev2 = new w.KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true });
+    ce.dispatchEvent(ev2);
+    assert.equal(ev2.defaultPrevented, true);
+    assert.equal(sel(w).length, 4);
+  });
+
+  withDom('Escape con varios bloques deja solo el principal y no cierra el editor', async () => {
+    const { w } = await boot(blocks3());
+    md(w, 'a', {}); md(w, 'c', { shiftKey: true });
+    await key(w, w.document.body, 'Escape');
+    assert.equal(sel(w).length, 1);
+  });
+});
+
+describe('renderer: borrar todo deja donde escribir', () => {
+  withDom('borrar todos los bloques deja un parrafo vacio', async () => {
+    const { w, server } = await boot([{ id: 'a', type: 'paragraph', text: 'Uno' }, { id: 'b', type: 'paragraph', text: 'Dos' }]);
+    w.document.querySelector('.doc-b[data-id="a"] .doc-ce').dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, button: 0 }));
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true }));
+    await key(w, w.document.body, 'Delete');
+    assert.equal(server.doc.blocks.length, 1);
+    assert.equal(server.doc.blocks[0].type, 'paragraph');
+    assert.ok(surfaces(w).length === 1);
+  });
+});

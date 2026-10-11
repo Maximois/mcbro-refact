@@ -530,16 +530,62 @@ function ensureTab() {
     if (fav) fav.textContent = '📄';
   }
 
-  function select(id) {
+  function select(id) { setSelection(id ? [id] : [], id || null); }
+
+  // Seleccion de varios bloques: `ids` en cualquier orden, `primary` es el que
+  // manda para la barra de formato (el ultimo tocado).
+  function setSelection(ids, primary) {
     const h = host();
     if (!h) return;
-    ui.selectedBlockId = id || null;
+    const list = Array.from(new Set(ids || []));
+    ui.selIds = list;
+    ui.selectedBlockId = primary && list.includes(primary) ? primary : (list[list.length - 1] || null);
     h.querySelectorAll('.doc-b.sel').forEach((x) => x.classList.remove('sel'));
-    if (id) {
+    list.forEach((id) => {
       const b = h.querySelector('.doc-b[data-id="' + cssEscape(id) + '"]');
       if (b) b.classList.add('sel');
-    }
+    });
+    h.classList.toggle('doc-multi', list.length > 1);
     refreshFormatBar();
+  }
+
+  // Ids de los bloques seleccionados, en el orden del documento.
+  function selectedIds() {
+    const h = host();
+    if (!h) return [];
+    return Array.from(h.querySelectorAll('.doc-b.sel')).map((x) => x.dataset.id);
+  }
+
+  function selectedBlocks() {
+    const ids = new Set(selectedIds());
+    return ((ui.snap && ui.snap.doc && ui.snap.doc.blocks) || []).filter((b) => ids.has(b.id));
+  }
+
+  const TEXT_TYPES = ['paragraph', 'heading', 'quote', 'code', 'list'];
+
+  // Clic con Mayus (rango desde el ancla) o Ctrl/Cmd (alternar un bloque).
+  function extendSelection(id, mode) {
+    const all = ((ui.snap && ui.snap.doc && ui.snap.doc.blocks) || []).map((b) => b.id);
+    const anchor = ui.selAnchor && all.includes(ui.selAnchor) ? ui.selAnchor : (ui.selectedBlockId || id);
+    let ids;
+    if (mode === 'range') {
+      const a = all.indexOf(anchor), b = all.indexOf(id);
+      if (a < 0 || b < 0) return;
+      ids = all.slice(Math.min(a, b), Math.max(a, b) + 1);
+    } else {
+      const cur = new Set(selectedIds());
+      if (cur.has(id)) cur.delete(id); else cur.add(id);
+      ids = all.filter((x) => cur.has(x));
+      ui.selAnchor = id;
+    }
+    if (mode === 'range' && !ui.selAnchor) ui.selAnchor = anchor;
+    // Sin texto activo: la seleccion de bloques no debe dejar un cursor perdido.
+    const ae = document.activeElement;
+    if (ae && ae.closest && ae.closest('.doc-ce') && ae.blur) ae.blur();
+    const sel = window.getSelection && window.getSelection();
+    if (sel) sel.removeAllRanges();
+    ui.savedCe = null; ui.savedRange = null;
+    setSelection(ids, id);
   }
 
   function selectedBlock() {
@@ -595,17 +641,22 @@ function ensureTab() {
   }
 
   async function applySelectedBlock(update) {
-    const h = host();
-    const selected = h && h.querySelector('.doc-b.sel');
-    const id = selected && selected.dataset.id;
-    if (!id || !ui.snap || !ui.snap.open) return;
+    const ids = selectedIds();
+    if (!ids.length || !ui.snap || !ui.snap.open) return;
     await flushPending();
-    const current = (ui.snap.doc.blocks || []).find((block) => block.id === id);
-    if (!current) return;
-    const next = update(current);
-    if (!next) return;
-    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'replaceBlock', id, block: next }] });
-    if (res && res.ok) { applySnapshot(res); select(id); scheduleAutoSave(); }
+    const multi = ids.length > 1;
+    const ops = [];
+    for (const id of ids) {
+      const current = (ui.snap.doc.blocks || []).find((block) => block.id === id);
+      if (!current) continue;
+      // Con varios bloques, tablas e imagenes no entran en cambios de texto.
+      if (multi && !TEXT_TYPES.includes(current.type)) continue;
+      const next = update(current);
+      if (next) ops.push({ op: 'replaceBlock', id, block: next });
+    }
+    if (!ops.length) return;
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops });
+    if (res && res.ok) { applySnapshot(res); setSelection(ids, ui.selectedBlockId); scheduleAutoSave(); }
     else if (res && res.error) toast(res.error, 'error');
   }
 
@@ -665,6 +716,17 @@ function ensureTab() {
     });
   }
 
+  // Con varios bloques: si todos ya lo tienen se quita, si no se pone a todos.
+  function toggleBlockFlag(key) {
+    const turnOff = selectedBlocks().filter((b) => TEXT_TYPES.includes(b.type)).every((b) => b[key]);
+    applySelectedBlock((block) => {
+      const next = Object.assign({}, block);
+      if (turnOff) delete next[key];
+      else next[key] = true;
+      return next;
+    });
+  }
+
   function toggleList(ordered) {
     const block = selectedBlock();
     if (!block) return;
@@ -706,13 +768,7 @@ function ensureTab() {
     } else if (button.dataset.blockToggle && ['bold', 'italic', 'underline'].includes(button.dataset.blockToggle) && activeCe()) {
       applyInline(button.dataset.blockToggle);
     } else if (button.dataset.blockToggle) {
-      const key = button.dataset.blockToggle;
-      applySelectedBlock((block) => {
-        const next = Object.assign({}, block);
-        if (next[key]) delete next[key];
-        else next[key] = true;
-        return next;
-      });
+      toggleBlockFlag(button.dataset.blockToggle);
     } else if (button.dataset.blockAlign) {
       applySelectedBlock((block) => Object.assign({}, block, { align: button.dataset.blockAlign }));
     } else if (button.dataset.blockList) {
@@ -762,18 +818,70 @@ function ensureTab() {
   }
 
   async function duplicateSelectedBlock() {
-    const block = selectedBlock();
-    if (!block || !ui.snap) return;
+    const ids = selectedIds();
+    if (!ids.length || !ui.snap) return;
     await flushPending();
-    const at = ui.snap.doc.blocks.findIndex((b) => b.id === block.id);
-    const copy = Object.assign({}, block);
-    delete copy.id;
-    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'insert', index: at + 1, block: copy }] });
+    const blocks = ui.snap.doc.blocks || [];
+    const chosen = new Set(ids);
+    const idx = blocks.map((b, i) => (chosen.has(b.id) ? i : -1)).filter((i) => i >= 0);
+    const last = idx[idx.length - 1];
+    const copies = idx.map((i) => { const c = Object.assign({}, blocks[i]); delete c.id; return c; });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'insertBlocks', index: last + 1, blocks: copies }] });
     if (res && res.ok) {
-      const id = res.doc.blocks[at + 1] && res.doc.blocks[at + 1].id;
+      const newIds = (res.doc.blocks || []).slice(last + 1, last + 1 + copies.length).map((b) => b.id);
       applySnapshot(res);
-      if (id) select(id);
+      setSelection(newIds, newIds[newIds.length - 1]);
     } else if (res && res.error) toast(res.error, 'error');
+  }
+
+  // Texto y HTML de los bloques seleccionados, para copiar/cortar.
+  function selectedClipboard() {
+    const list = selectedBlocks();
+    const text = list.map((b) => (b.type === 'table' ? (b.rows || []).map((r) => r.join('\t')).join('\n')
+      : b.type === 'image' ? (b.alt || '') : blockText(b))).join('\n\n');
+    const htmlText = html ? list.map((b) => html.blockToHtml(b)).join('\n') : '';
+    return { text, html: htmlText, count: list.length };
+  }
+
+  async function copySelectedBlocks(cut) {
+    const clip = selectedClipboard();
+    if (!clip.count) return;
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.ClipboardItem && clip.html) {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/plain': new Blob([clip.text], { type: 'text/plain' }),
+          'text/html': new Blob([clip.html], { type: 'text/html' })
+        })]);
+        ok = true;
+      } else if (navigator.clipboard) { await navigator.clipboard.writeText(clip.text); ok = true; }
+    } catch (e) { ok = false; }
+    if (!ok) { toast('No se pudo usar el portapapeles', 'error'); return; }
+    if (cut) await deleteSelectedBlock();
+    else toast(clip.count > 1 ? clip.count + ' bloques copiados' : 'Bloque copiado');
+  }
+
+  function multiMenuItems() {
+    const n = selectedIds().length;
+    const items = [{ head: n + ' bloques seleccionados' }];
+    items.push({ label: 'Copiar', hint: 'Ctrl+C', run: () => copySelectedBlocks(false) });
+    items.push({ label: 'Cortar', hint: 'Ctrl+X', run: () => copySelectedBlocks(true) });
+    items.push({ sep: true }, { head: 'Convertir en' });
+    items.push({ label: 'Párrafo', run: () => applyBlockType('paragraph') });
+    [1, 2, 3].forEach((l) => items.push({ label: 'Título ' + l, run: () => applyBlockType('heading', l) }));
+    items.push({ label: 'Cita', run: () => applyBlockType('quote') });
+    items.push({ label: 'Lista con viñetas', run: () => toggleList(false) });
+    items.push({ label: 'Lista numerada', run: () => toggleList(true) });
+    items.push({ sep: true }, { head: 'Formato' });
+    items.push({ label: 'Negrita', run: () => toggleBlockFlag('bold') }, { label: 'Cursiva', run: () => toggleBlockFlag('italic') }, { label: 'Subrayado', run: () => toggleBlockFlag('underline') });
+    [['left', 'Alinear a la izquierda'], ['center', 'Centrar'], ['right', 'Alinear a la derecha'], ['justify', 'Justificar']]
+      .forEach(([a, l]) => items.push({ label: l, run: () => applySelectedBlock((b) => Object.assign({}, b, { align: a })) }));
+    items.push({ sep: true }, { head: 'Bloques' });
+    items.push({ label: 'Subir', run: () => moveSelectedBlock('up') }, { label: 'Bajar', run: () => moveSelectedBlock('down') });
+    items.push({ label: 'Duplicar', run: duplicateSelectedBlock });
+    items.push({ label: 'Eliminar', danger: true, run: deleteSelectedBlock });
+    items.push({ sep: true }, { label: 'Quitar la selección', run: () => select(ui.selectedBlockId) });
+    return items;
   }
 
   function contextMenuItems(ctx) {
@@ -902,7 +1010,8 @@ function ensureTab() {
     const bEl = e.target.closest && e.target.closest('.doc-b');
     const ce = e.target.closest && e.target.closest('.doc-ce');
     closeContextMenu();
-    if (bEl) select(bEl.dataset.id);
+    const multiKeep = !!(bEl && selectedIds().length > 1 && selectedIds().includes(bEl.dataset.id));
+    if (bEl && !multiKeep) select(bEl.dataset.id);
     const cell = e.target.closest && e.target.closest('[data-tr]');
     if (cell && bEl) ui.cell = { id: bEl.dataset.id, row: Number(cell.dataset.tr), col: Number(cell.dataset.tc) };
     const sel = window.getSelection();
@@ -917,7 +1026,7 @@ function ensureTab() {
     }
     ui.ctxWord = ce ? wordRangeAt(ce, e.clientX, e.clientY) : null;
     const block = bEl ? ((ui.snap && ui.snap.doc && ui.snap.doc.blocks) || []).find((b) => b.id === bEl.dataset.id) : null;
-    const items = contextMenuItems({ ce, hasSel, block, inCell: !!cell });
+    const items = multiKeep ? multiMenuItems() : contextMenuItems({ ce, hasSel, block, inCell: !!cell });
 
     const menu = document.createElement('div');
     menu.id = 'doc-ctxmenu';
@@ -1490,34 +1599,49 @@ function ensureTab() {
   }
 
   async function moveSelectedBlock(direction) {
-    const selected = selectedBlock();
-    if (!selected || !ui.snap) return;
+    const ids = selectedIds();
+    if (!ids.length || !ui.snap) return;
     await flushPending();
     const blocks = ui.snap.doc.blocks || [];
-    const index = blocks.findIndex((block) => block.id === selected.id);
-    const insertAt = direction === 'up' ? index - 1 : index + 2;
-    if (index < 0 || insertAt < 0 || index >= blocks.length || (direction === 'down' && index >= blocks.length - 1)) return;
-    const moved = Object.assign({}, blocks[index]);
-    delete moved.id;
-    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [
-      { op: 'insert', index: insertAt, block: moved },
-      { op: 'deleteBlock', id: selected.id }
-    ] });
+    const chosen = new Set(ids);
+    const idx = blocks.map((b, i) => (chosen.has(b.id) ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return;
+    const n = idx.length;
+    let insertAt;
+    let newStart;
+    if (direction === 'up') {
+      let prev = idx[0] - 1;
+      while (prev >= 0 && chosen.has(blocks[prev].id)) prev--;
+      if (prev < 0) return;
+      insertAt = prev;
+      newStart = prev;
+    } else {
+      let next = idx[n - 1] + 1;
+      while (next < blocks.length && chosen.has(blocks[next].id)) next++;
+      if (next >= blocks.length) return;
+      insertAt = next + 1;
+      newStart = next - n + 1;
+    }
+    const copies = idx.map((i) => { const c = Object.assign({}, blocks[i]); delete c.id; return c; });
+    const ops = [{ op: 'insertBlocks', index: insertAt, blocks: copies }].concat(ids.map((id) => ({ op: 'deleteBlock', id })));
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops });
     if (res && res.ok) {
-      const newIndex = direction === 'up' ? index - 1 : index + 1;
-      const movedId = res.doc.blocks[newIndex]?.id;
+      const movedIds = (res.doc.blocks || []).slice(newStart, newStart + n).map((b) => b.id);
       applySnapshot(res);
-      if (movedId) select(movedId);
+      setSelection(movedIds, movedIds[movedIds.length - 1]);
     } else if (res && res.error) toast(res.error, 'error');
   }
 
   async function deleteSelectedBlock() {
-    const block = selectedBlock();
-    if (!block || !ui.snap) return;
+    const ids = selectedIds();
+    if (!ids.length || !ui.snap) return;
     await flushPending();
     const blocks = ui.snap.doc.blocks || [];
-    const at = blocks.findIndex((x) => x.id === block.id);
-    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: [{ op: 'deleteBlock', id: block.id }] });
+    const at = blocks.findIndex((x) => x.id === ids[0]);
+    const delOps = ids.map((id) => ({ op: 'deleteBlock', id }));
+    // Un documento sin ningun bloque no tiene donde escribir: queda un parrafo vacio.
+    if (ids.length >= blocks.length) delOps.push({ op: 'insert', index: 0, block: { type: 'paragraph', text: '' } });
+    const res = await docEdit({ expectedHash: ui.snap.doc.hash, ops: delOps });
     if (!(res && res.ok)) { if (res && res.error) toast(res.error, 'error'); return; }
     // Sin confirmacion nativa: se borra y se ofrece Deshacer (como Word).
     ui.selectedBlockId = null;
@@ -1526,7 +1650,8 @@ function ensureTab() {
     const left = (res.doc && res.doc.blocks) || [];
     const next = left[Math.min(at, left.length - 1)];
     if (next) { select(next.id); setTimeout(() => focusBlock(next.id), 0); }
-    toast('Bloque eliminado', null, { label: 'Deshacer', run: () => travelHistory('undo') });
+    else setSelection([], null);
+    toast(ids.length > 1 ? ids.length + ' bloques eliminados' : 'Bloque eliminado', null, { label: 'Deshacer', run: () => travelHistory('undo') });
   }
 
   async function travelHistory(direction) {
@@ -1833,7 +1958,11 @@ function ensureTab() {
     b0.replaceChildren(stack);
     layoutPaperPages(stack, blocks, nodes, snap.doc.page || { width: 595, height: 842, margin: 57 });
     if (ui.zoom && ui.zoom !== 100) stack.style.zoom = String(ui.zoom / 100);
-    if (ui.selectedBlockId) select(ui.selectedBlockId);
+    if (ui.selIds && ui.selIds.length > 1) {
+      const have = new Set(blocks.map((b) => b.id));
+      const keep = ui.selIds.filter((x) => have.has(x));
+      setSelection(keep, ui.selectedBlockId);
+    } else if (ui.selectedBlockId) select(ui.selectedBlockId);
     else refreshFormatBar();
     restoreCaret(caret);
     b0.scrollTop = scrollY;
@@ -2441,6 +2570,8 @@ const h = host();
     const saved = ui.savedCe;
     const h = host();
     const selected = h && h.querySelector('.doc-b.sel');
+    // Con varios bloques elegidos no hay texto activo: el formato va a los bloques.
+    if (selectedIds().length > 1) return null;
     return saved && saved.isConnected && ui.savedRange && selected && selected.contains(saved) ? saved : null;
   }
 
@@ -2518,7 +2649,7 @@ const h = host();
     if (!bar) return;
     const ce = activeCe();
     bar.querySelectorAll('[data-inline-only], #doc-font, #doc-color, #doc-highlight').forEach((c) => {
-      c.disabled = !ce;
+      c.disabled = !ce && !(c.id === 'doc-color' && selectedIds().length > 0);
     });
     // Con el foco en un control de la barra no se lee nada: seria el estado
     // de otra seleccion.
@@ -2570,7 +2701,11 @@ const h = host();
       input.addEventListener('keydown', reset);
     });
     bar.querySelector('#doc-font').addEventListener('change', (e) => applyInline('font', e.target.value));
-    bar.querySelector('#doc-color').addEventListener('change', (e) => applyInline('color', e.target.value));
+    bar.querySelector('#doc-color').addEventListener('change', (e) => {
+      // Sin texto elegido pero con bloques seleccionados, el color va al bloque entero.
+      if (!activeCe() && selectedIds().length) applySelectedBlock((b) => Object.assign({}, b, { color: e.target.value }));
+      else applyInline('color', e.target.value);
+    });
     bar.querySelector('#doc-highlight').addEventListener('change', (e) => applyInline('highlight', e.target.value));
     if (inlineSelectionWired) return;
     inlineSelectionWired = true;
@@ -2696,6 +2831,16 @@ const h = host();
     });
     b0.addEventListener('mousedown', (e) => {
       const bEl = e.target.closest('.doc-b');
+      if (bEl && e.button === 0 && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+        // Mayus: rango de bloques. Ctrl/Cmd: suma o quita un bloque. No se
+        // coloca cursor de texto: el clic es para elegir bloques.
+        e.preventDefault();
+        extendSelection(bEl.dataset.id, e.shiftKey ? 'range' : 'toggle');
+        return;
+      }
+      // Clic derecho sobre un bloque ya elegido: se conserva la seleccion multiple.
+      if (bEl && e.button === 2 && selectedIds().length > 1 && selectedIds().includes(bEl.dataset.id)) return;
+      ui.selAnchor = bEl ? bEl.dataset.id : null;
       select(bEl ? bEl.dataset.id : null);
     });
     wireInlineFormatting();
@@ -2715,7 +2860,38 @@ const h = host();
     }
 
     const enCampo = !!(e.target && e.target.closest && e.target.closest('textarea, input, .doc-ce'));
+    const enControl = !!(e.target && e.target.closest && e.target.closest('textarea, input, select, button, [contenteditable="true"], .doc-modal'));
+    const nSel = selectedIds().length;
+    if (e.key === 'Escape' && !enCampo && nSel > 1) { e.preventDefault(); select(ui.selectedBlockId); return; }
     if (e.key === 'Escape' && !enCampo) { e.preventDefault(); api.close(); return; }
+    // Seleccion de bloques (sin cursor de texto): Supr borra, Ctrl+C/X copian.
+    if (!enControl && nSel > 0 && !e.altKey) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); deleteSelectedBlock(); return; }
+      const k0 = String(e.key || '').toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && (k0 === 'c' || k0 === 'x')) { e.preventDefault(); copySelectedBlocks(k0 === 'x'); return; }
+    }
+    // Ctrl+A: dentro de un bloque selecciona su texto; si ya estaba todo
+    // seleccionado (o el bloque esta vacio), pasa a seleccionar todos los bloques.
+    if ((e.ctrlKey || e.metaKey) && String(e.key || '').toLowerCase() === 'a' && !e.shiftKey && !e.altKey) {
+      const ceA = e.target && e.target.closest && e.target.closest('.doc-ce');
+      const enCampoReal = !!(e.target && e.target.closest && e.target.closest('textarea, input, select, [contenteditable="true"], .doc-modal'));
+      let all = !enCampoReal;
+      if (ceA) {
+        const sel = window.getSelection();
+        const full = ceText(ceA);
+        const picked = sel && sel.rangeCount && ceA.contains(sel.getRangeAt(0).startContainer) ? sel.toString().replace(/\u00a0/g, ' ') : '';
+        all = !full.length || picked === full;
+      }
+      if (all) {
+        e.preventDefault();
+        const ids = (((ui.snap && ui.snap.doc && ui.snap.doc.blocks) || [])).map((b) => b.id);
+        const ae = document.activeElement;
+        if (ae && ae.blur) ae.blur();
+        if (window.getSelection) window.getSelection().removeAllRanges();
+        setSelection(ids, ids[ids.length - 1]);
+        return;
+      }
+    }
     if (e.ctrlKey || e.metaKey) {
       const k = String(e.key || '').toLowerCase();
       if (k === 'z') { e.preventDefault(); await travelHistory(e.shiftKey ? 'redo' : 'undo'); return; }
